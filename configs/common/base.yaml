@@ -1,0 +1,3 @@
+app_name: pir-abuse-control
+log_level: INFO
+log_dir: logs
