@@ -10,11 +10,16 @@
   * **严格限制**：只有已经成功进入 `PENDING` 状态的请求，才可能流转为 `FAILED`。前置拒绝不写入任何消费状态。
   * **终态约束**：`FAILED` 为终态；一旦进入该状态，票据即作废（Burned），不可再次使用。
 
-### 1.2 票据对象 (Ticket)
+### 1.2 票据对象 (Ticket) 与编码同构约束
 对应论文 `t = (SN, sigma, EpochID)`：
-* `sn`: 序列号，客户端生成的 256-bit 随机熵。
-* `sigma`: 盲签名。
+* `sn`: 序列号，客户端生成的 256-bit 随机熵（表现为 64 字符纯小写 Hex）。
+* `sigma`: 盲签名。**【编码约定】** 采用“定长模数字节串”的 Base64 编码。
 * `epoch_id`: 当前时间窗标识。
+
+**⚠️ 【跨服务编码同构约束 (Day 9 追加)】**：
+Client 盲化与 Verifier 验签时，必须确保消息 $m$ 与签名 $\sigma$ 的序列化方式完全同构，否则验签必定失败：
+1. **被签消息 $m$ 编码**：$m = \text{HexToInteger}( \text{SN} \parallel \text{EpochID}_{32-bit-BigEndian} )$。即 32 字节 SN 加上 4 字节补零对齐的 EpochID。
+2. **签名 $\sigma$ 解码**：Verifier 必须先将 Base64 解码为 Bytes，再转为大整数执行 $s^e \pmod n$。
 
 ## 2. 绑定与请求模型
 ### 2.1 绑定机制定义
