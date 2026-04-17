@@ -1,13 +1,25 @@
 import logging
 from pathlib import Path
+import yaml
 
 
-def setup_logger() -> logging.Logger:
-    log_dir = Path("logs")
+CONFIG_PATH = Path("configs/common/base.yaml")
+
+
+def load_config() -> dict:
+    with CONFIG_PATH.open("r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+
+def setup_logger(config: dict) -> logging.Logger:
+    log_dir = Path(config.get("log_dir", "logs"))
     log_dir.mkdir(parents=True, exist_ok=True)
 
+    log_level_name = config.get("log_level", "INFO").upper()
+    log_level = getattr(logging, log_level_name, logging.INFO)
+
     logger = logging.getLogger("issuer")
-    logger.setLevel(logging.INFO)
+    logger.setLevel(log_level)
 
     if not logger.handlers:
         formatter = logging.Formatter(
@@ -27,8 +39,10 @@ def setup_logger() -> logging.Logger:
 
 
 def main():
-    logger = setup_logger()
-    logger.info("issuer service bootstrap ok")
+    config = load_config()
+    logger = setup_logger(config)
+    app_name = config.get("app_name", "unknown-app")
+    logger.info("issuer service bootstrap ok | app=%s", app_name)
 
 
 if __name__ == "__main__":
