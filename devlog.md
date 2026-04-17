@@ -1,5 +1,3 @@
-cat > devlog.md <<'EOF'
-
 \# Development Log
 
 
@@ -10,5 +8,5 @@ cat > devlog.md <<'EOF'
 
 \- Created basic project files
 
-EOF
+
 

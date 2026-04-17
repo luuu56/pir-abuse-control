@@ -1,5 +1,3 @@
-cat > README.md <<'EOF'
-
 \# PIR Abuse-Resistant Anonymous Access Control Prototype
 
 
@@ -28,5 +26,5 @@ Project initialization.
 
 \- experiments
 
-EOF
+
 

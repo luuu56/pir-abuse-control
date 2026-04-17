@@ -1,5 +1,3 @@
-cat > TODO.md <<'EOF'
-
 \# TODO
 
 
@@ -20,5 +18,5 @@ cat > TODO.md <<'EOF'
 
 \- \[ ] Create devlog.md
 
-EOF
+
 
