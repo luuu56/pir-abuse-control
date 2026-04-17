@@ -1,5 +1,6 @@
 # services/verifier/main.py
 import sys
+import base64
 import requests
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,6 +14,10 @@ from common.config import load_config
 from common.logging_utils import setup_logger
 from common.models import RequestInstance, PIRResponse, Decision
 from services.verifier.crypto import crypto_manager
+from common.crypto_utils import (
+    derive_sk_t, compute_query_commitment,
+    serialize_witness, compute_binding_tag
+)
 
 config = load_config()
 logger = setup_logger("verifier", config)
@@ -24,7 +29,6 @@ SERVER_PORT = verifier_cfg.get("port", 8002)
 issuer_cfg = config.get("issuer", {})
 ISSUER_URL = f"http://{issuer_cfg.get('host', '127.0.0.1')}:{issuer_cfg.get('port', 8001)}/api/v1/issuer"
 
-# 缓存公钥（当前为单进程原型缓存）
 issuer_public_key = {"n": None, "e": None}
 
 
@@ -50,12 +54,10 @@ def fetch_issuer_public_key():
         logger.info("Successfully cached Issuer public key.")
     except Exception as e:
         logger.error(f"Critical: Failed to fetch public key: {e}")
-        # 失败时清空旧缓存，防止脑裂
         issuer_public_key["n"] = None
         issuer_public_key["e"] = None
 
 
-# 使用 FastAPI 推荐的 lifespan 替代废弃的 on_event
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     fetch_issuer_public_key()
@@ -74,7 +76,7 @@ def execute_query(req: RequestInstance):
         if issuer_public_key["n"] is None:
             raise HTTPException(status_code=503, detail="Issuer PK not available")
 
-    # 1. 验证票据签名 (之前这块不小心被注释覆盖了！)
+    # --- 1. 验证票据签名 ---
     is_valid_sig = crypto_manager.verify_ticket_signature(
         sn_hex=req.ticket.sn,
         epoch_id=req.ticket.epoch_id,
@@ -83,22 +85,50 @@ def execute_query(req: RequestInstance):
         e=issuer_public_key["e"]
     )
 
-    # 验签失败拦截
     if not is_valid_sig:
         logger.warning(f"Request {req.request_id} REJECTED: Invalid RSA Signature")
         return PIRResponse(
-            request_id=req.request_id,
-            decision=Decision.REJECTED,
+            request_id=req.request_id, decision=Decision.REJECTED,
             reason="Invalid Ticket Signature"
         )
-
-    # 验签通过的显式日志
     logger.info(f"Request {req.request_id} passed RSA signature verification.")
+
+    # --- 2. 验证绑定 (Day 11 核心) ---
+    try:
+        # 如果客户端没传 witness，直接拒绝
+        if req.witness is None:
+            logger.warning(f"Request {req.request_id} REJECTED: Missing Witness")
+            return PIRResponse(
+                request_id=req.request_id, decision=Decision.REJECTED,
+                reason="Missing Request Witness"
+            )
+
+        sigma_bytes = base64.b64decode(req.ticket.sigma, validate=True)
+        expected_sk_t = derive_sk_t(sigma_bytes, req.ticket.sn, req.ticket.epoch_id)
+        expected_c_q = compute_query_commitment(req.query_payload)
+        witness_bytes = serialize_witness(req.witness.model_dump())
+        expected_binding_tag = compute_binding_tag(expected_sk_t, expected_c_q, witness_bytes)
+
+        if req.binding_tag != expected_binding_tag:
+            logger.warning(f"Request {req.request_id} REJECTED: Binding Tag Mismatch")
+            return PIRResponse(
+                request_id=req.request_id, decision=Decision.REJECTED,
+                reason="Binding Consistency Check Failed"
+            )
+
+        logger.info(f"Request {req.request_id} passed Binding consistency check.")
+
+    except Exception as e:
+        logger.error(f"Error during binding verification: {e}")
+        return PIRResponse(
+            request_id=req.request_id, decision=Decision.REJECTED,
+            reason="Internal Error during Binding Verification"
+        )
 
     return PIRResponse(
         request_id=req.request_id,
         decision=Decision.SUCCESS,
-        reason="[Day 10 Stub] Sig-Check passed; bypass Binding/PIR",
+        reason="[Day 11 Stub] Sig-Check & Binding passed; bypass PIR",
         data="dummy_pir_result_for_testing"
     )
 

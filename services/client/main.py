@@ -3,7 +3,14 @@ import sys
 import base64
 import requests
 import logging
+import time
+import uuid
 from pathlib import Path
+from common.models import RequestContext, RequestInstance
+from common.crypto_utils import (
+    derive_sk_t, compute_query_commitment,
+    serialize_witness, compute_binding_tag
+)
 
 # 将根目录加入 sys.path
 root_path = Path(__file__).resolve().parent.parent.parent
@@ -102,16 +109,48 @@ def acquire_ticket() -> Ticket:
     return ticket
 
 
+def create_bound_request(ticket: Ticket, query_payload: str) -> RequestInstance:
+    """
+    Day 11: 将票据与载荷进行密码学绑定
+    """
+    logger.info("=== Starting Ticket Binding Process ===")
+
+    # 1. 还原 sigma 字节串
+    sigma_bytes = base64.b64decode(ticket.sigma)
+
+    # 2. 派生 sk_t
+    sk_t = derive_sk_t(sigma_bytes, ticket.sn, ticket.epoch_id)
+
+    # 3. 计算载荷承诺 c_q
+    c_q_hex = compute_query_commitment(query_payload)
+
+    # 4. 构建并序列化 witness
+    witness = RequestContext(
+        timestamp_ms=int(time.time() * 1000),
+        nonce=str(uuid.uuid4()),
+        client_state_digest="client_day11_state"
+    )
+    witness_bytes = serialize_witness(witness.model_dump())
+
+    # 5. 计算 HMAC 绑定标签 b
+    binding_tag = compute_binding_tag(sk_t, c_q_hex, witness_bytes)
+
+    # 6. 组装 RequestInstance
+    req = RequestInstance(
+        request_id=str(uuid.uuid4()),
+        query_payload=query_payload,
+        ticket=ticket,
+        binding_tag=binding_tag,
+        witness=witness
+    )
+    logger.info(f"Binding successful. Binding Tag: {binding_tag[:16]}...")
+    return req
+
 if __name__ == "__main__":
     try:
         t = acquire_ticket()
-        print(f"\n--- Final Ticket (Epoch {t.epoch_id}) ---")
-        print(t.model_dump_json(indent=2))
-    except requests.exceptions.RequestException as err:
-        logger.error(f"HTTP Network/Timeout Error: {err}")
-    except ValueError as err:
-        logger.error(f"Data Validation/Encoding Error: {err}")
-    except RuntimeError as err:
-        logger.error(f"Runtime Flow Error: {err}")
+        req = create_bound_request(t, "day11_real_pir_query")
+        print("\n--- Final Bound RequestInstance ---")
+        print(req.model_dump_json(indent=2))
     except Exception as err:
-        logger.error(f"Unexpected Error: {err}")
+        logger.error(f"Flow failed: {err}")
