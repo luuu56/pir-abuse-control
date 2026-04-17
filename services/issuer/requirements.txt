@@ -1,1 +1,5 @@
 PyYAML==6.0.3
+fastapi
+uvicorn
+pycryptodome
+pydantic

@@ -1,14 +1,14 @@
-from enum import Enum
-from typing import Optional
 from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any
+from enum import Enum
 
 # --- 状态机与决策定义 ---
 
 class TicketState(str, Enum):
-    UNUSED = "UNUSED"
-    PENDING = "PENDING"
-    CONSUMED = "CONSUMED"
-    FAILED = "FAILED"  # 终态，不可重试
+    UNUSED = "UNUSED"       # 隐式初始态：尚未在 Redis 中存在
+    PENDING = "PENDING"     # 处理中：已被 Verifier 锁定，正在验证或执行 PIR
+    CONSUMED = "CONSUMED"   # 成功终态：已成功完成 PIR 执行
+    FAILED = "FAILED"       # 失败终态：PIR 执行失败或超时（票据烧毁，禁止重用）
 
 class Decision(str, Enum):
     SUCCESS = "SUCCESS"
@@ -53,9 +53,8 @@ class AuditRecord(BaseModel):
     entry_mac: str
 
 class PIRResponse(BaseModel):
-    """标准响应包装"""
     request_id: str
     decision: Decision
-    ticket_state: Optional[TicketState] = Field(None, description="Current state of the ticket in DB")
-    reason: Optional[str] = Field(None, description="Execution or rejection details")
-    data: Optional[str] = Field(None, description="PIR result (Base64/Encoded) if SUCCESS")
+    ticket_state: Optional[TicketState] = None  # 反馈票据最终状态
+    reason: Optional[str] = None
+    data: Optional[Any] = None
