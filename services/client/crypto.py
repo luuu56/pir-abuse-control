@@ -2,6 +2,7 @@
 import secrets
 import logging
 from Crypto.Util.number import inverse, GCD
+from common.crypto_utils import encode_ticket_message
 
 logger = logging.getLogger("client.crypto")
 
@@ -16,20 +17,10 @@ class ClientCryptoManager:
     @staticmethod
     def encode_message(sn_hex: str, epoch_id: int) -> int:
         """
-        【严格编码契约 (Day 9 第一版)】
-        将 SN 与 EpochID 拼接：SN(32 bytes) || EpochID(4 bytes big-endian)
-        注意：Verifier 侧在验签时，必须按同一规则重构 m_int！
+        【代理到统一编码契约】
+        消除冗余实现，直接复用 common.crypto_utils 的单一事实来源。
         """
-        if len(sn_hex) != 64:
-            raise ValueError(f"SN hex must be 64 characters, got {len(sn_hex)}")
-        if not all(c in '0123456789abcdefABCDEF' for c in sn_hex):
-            raise ValueError("SN must be a valid hex string")
-        if not (0 <= epoch_id <= 0xffffffff):
-            raise ValueError(f"EpochID {epoch_id} out of 32-bit range")
-
-        epoch_hex = f"{epoch_id:08x}"
-        encoded_hex = sn_hex + epoch_hex
-        return int(encoded_hex, 16)
+        return encode_ticket_message(sn_hex, epoch_id)
 
     @staticmethod
     def generate_blinding_factor(n: int) -> int:
