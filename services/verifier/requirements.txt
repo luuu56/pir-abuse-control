@@ -4,4 +4,4 @@ uvicorn
 pycryptodome
 pydantic
 requests
-redis
+redishttpx

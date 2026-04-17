@@ -106,39 +106,60 @@
 
 ---
 
-## 进行中 / 下一步
 
 ### Day 11：Binding 验证
-- [ ] 明确 `sk_t` 的工程派生实现
-- [ ] 实现 `query_commitment = H(q)`
-- [ ] 实现 Witness 规范化序列化
-- [ ] 实现 `binding_tag = HMAC(sk_t, c_q || w)`
-- [ ] 在 Verifier 中加入 binding 校验
-- [ ] 增加正反例：
-  - [ ] 正确 binding 通过
-  - [ ] 篡改 `query_payload` 被拒绝
-  - [ ] 篡改 `witness` 被拒绝
-  - [ ] 篡改 `binding_tag` 被拒绝
+- [x] 明确 `sk_t` 的工程派生实现
+- [x] 实现 `query_commitment = H(q)`
+- [x] 实现 Witness 规范化序列化
+- [x] 实现 `binding_tag = HMAC(sk_t, c_q || w)`
+- [x] 在 Verifier 中加入 binding 校验
+- [x] 增加正反例：
+  - [x] 正确 binding 通过
+  - [x] 篡改 `query_payload` 被拒绝
+  - [x] 篡改 `witness` 被拒绝
+  - [x] 篡改 `binding_tag` 被拒绝
 
 ### Day 12：Redis 防重放与状态流转
-- [ ] 接入 Redis
-- [ ] 实现 `SETNX SN PENDING`
-- [ ] 实现状态流转：
-  - [ ] `UNUSED -> PENDING`
-  - [ ] `PENDING -> CONSUMED`
-  - [ ] `PENDING -> FAILED`
-- [ ] 明确拒绝分支：
-  - [ ] `PENDING` -> in-flight / replay
-  - [ ] `CONSUMED` -> double spend
-  - [ ] `FAILED` -> burned ticket
-- [ ] 增加状态机联调测试
+- [x] 接入 Redis
+- [x] 实现 `SETNX SN PENDING`
+- [x] 实现状态流转：
+  - [x] `UNUSED -> PENDING`
+  - [x] `PENDING -> CONSUMED`
+  - [x] `PENDING -> FAILED`
+- [x] 明确拒绝分支：
+  - [x] `PENDING` -> in-flight / replay
+  - [x] `CONSUMED` -> double spend
+  - [x] `FAILED` -> burned ticket
+- [x] 增加状态机联调测试
 
-### Day 13+：Auditor / PIR 串联
-- [ ] 定义审计记录写入时机
-- [ ] 完成 Verifier -> Auditor 的 report 接口打通
-- [ ] 接入 PIR Server stub
-- [ ] 将当前 verifier stub success 替换为真实 PIR 转发结果
-- [ ] 完成 `SUCCESS / FAILED` 与 PIR 执行结果绑定
+### Day 13+：Verifier / PIR Server 串联（第一阶段）
+- [x] 建立 `services/pir_server/main.py` HTTP 适配层（Stub）
+- [x] 暴露 `/api/v1/pir/query`
+- [x] 将 Verifier 中本地 stub 执行替换为 HTTP 网络桥接
+- [x] 抽离 `call_pir_server()`，避免 `/execute` 路由继续膨胀
+- [x] 将 PIR 执行结果与票据状态推进绑定：
+  - [x] PIR 成功 -> `PENDING -> CONSUMED`
+  - [x] PIR 失败 -> `PENDING -> FAILED`
+- [x] 保持 Day 12 生命周期语义在跨服务模式下不回退
+- [x] 增加审计本地存根：
+  - [x] 在 Verifier 本地组装 `audit_record_stub`
+  - [x] 先以日志方式留痕，不立即强绑定 Auditor HTTP 投递
+
+### 下一步：Auditor / 审计闭环（第二阶段）
+- [ ] 建立 `services/auditor/main.py` HTTP 存根
+- [ ] 暴露 `/api/v1/auditor/report`
+- [ ] 将当前 `[Audit Stub]` 升级为后台 HTTP 上报
+- [ ] 明确审计记录字段与 `common.models.AuditRecord` 一致
+- [ ] 验证 Auditor 不可用时不影响 Verifier 主决策返回
+
+### 下一步：PIR 协议收口（第三阶段）
+- [ ] 将 `pir_server` 当前 stub 请求/响应抽成公共模型
+- [ ] 将 PIR stub latency 收归配置
+- [ ] 为 `call_pir_server()` 增加 timeout / 5xx / connection refused 分类日志
+- [ ] 为网络桥接补充单独联调脚本或回归记录
+## 进行中 / 下一步
+
+
 
 ---
 

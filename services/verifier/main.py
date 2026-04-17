@@ -3,6 +3,7 @@ import sys
 import base64
 import requests
 import time
+import httpx
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
@@ -30,6 +31,10 @@ SERVER_PORT = verifier_cfg.get("port", 8002)
 
 issuer_cfg = config.get("issuer", {})
 ISSUER_URL = f"http://{issuer_cfg.get('host', '127.0.0.1')}:{issuer_cfg.get('port', 8001)}/api/v1/issuer"
+
+# 提取 PIR Server 配置
+pir_cfg = config.get("pir_server", {})
+PIR_SERVER_URL = f"http://{pir_cfg.get('host', '127.0.0.1')}:{pir_cfg.get('port', 8003)}/api/v1/pir"
 
 # 缓存公钥（当前为单进程原型缓存）
 issuer_public_key = {"n": None, "e": None}
@@ -67,12 +72,40 @@ async def lifespan(app: FastAPI):
     fetch_issuer_public_key()
     yield
 
-
 app = FastAPI(title="PIR Abuse Control - Verifier Service", version="1.0", lifespan=lifespan)
 
+# --- 独立封装的网络桥接层 ---
+async def call_pir_server(query_payload: str) -> tuple[bool, str]:
+    """
+    独立封装的网络桥接层，避免 execute_query 过度臃肿。
+    返回 (is_success, data_or_error_msg)
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{PIR_SERVER_URL}/query",
+                json={"query_payload": query_payload},
+                timeout=15.0
+            )
+            resp.raise_for_status()
+            return True, resp.json().get("data", "no_data")
+    except httpx.TimeoutException:
+        logger.error("PIR Server connection or read timed out.")
+        return False, "timeout"
+    except httpx.HTTPStatusError as e:
+        logger.error(f"PIR Server returned HTTP error: {e.response.status_code}")
+        return False, f"http_error_{e.response.status_code}"
+    except httpx.RequestError as e:
+        logger.error(f"PIR Server request failed (connection refused/aborted): {e}")
+        return False, "connection_error"
+    except Exception as e:
+        logger.error(f"Unexpected error calling PIR Server: {e}")
+        return False, "unknown_error"
 
+
+# 注意：改为 async def，因为内部有了网络层 await
 @app.post("/api/v1/verifier/execute", response_model=PIRResponse)
-def execute_query(req: RequestInstance):
+async def execute_query(req: RequestInstance):
     logger.info(f"Received request {req.request_id} for SN: {req.ticket.sn[:16]}...")
 
     # --- 0. 检查当前状态 (拦截非 UNUSED 状态的票据) ---
@@ -106,29 +139,25 @@ def execute_query(req: RequestInstance):
 
     # --- 2. 验证绑定 (Binding Consistency Check) ---
     if req.witness is None:
-        return PIRResponse(
-            request_id=req.request_id, decision=Decision.REJECTED,
-            ticket_state=TicketState.UNUSED, reason="Missing Request Witness"
-        )
+        return PIRResponse(request_id=req.request_id, decision=Decision.REJECTED, ticket_state=TicketState.UNUSED,
+                           reason="Missing Request Witness")
+
+        # 优化可读性：将 expected_c_q 提至外部，避免后续 Audit Stub 引用悬空
+    expected_c_q = compute_query_commitment(req.query_payload)
 
     try:
         sigma_bytes = base64.b64decode(req.ticket.sigma, validate=True)
         expected_sk_t = derive_sk_t(sigma_bytes, req.ticket.sn, req.ticket.epoch_id)
-        expected_c_q = compute_query_commitment(req.query_payload)
         witness_bytes = serialize_witness(req.witness.model_dump())
         expected_binding_tag = compute_binding_tag(expected_sk_t, expected_c_q, witness_bytes)
 
         if req.binding_tag != expected_binding_tag:
-            return PIRResponse(
-                request_id=req.request_id, decision=Decision.REJECTED,
-                ticket_state=TicketState.UNUSED, reason="Binding Consistency Check Failed"
-            )
+            return PIRResponse(request_id=req.request_id, decision=Decision.REJECTED,
+                               ticket_state=TicketState.UNUSED, reason="Binding Consistency Check Failed")
     except Exception as e:
         logger.error(f"Error during binding verification: {e}")
-        return PIRResponse(
-            request_id=req.request_id, decision=Decision.REJECTED,
-            ticket_state=TicketState.UNUSED, reason="Internal Error during Binding Verification"
-        )
+        return PIRResponse(request_id=req.request_id, decision=Decision.REJECTED, ticket_state=TicketState.UNUSED,
+                           reason="Internal Error during Binding Verification")
 
     # --- 3. 原子锁定为 PENDING (防双花) ---
     if not state_manager.try_lock(req.ticket.sn, lock_ttl_sec=30):
@@ -139,37 +168,45 @@ def execute_query(req: RequestInstance):
         )
     logger.info(f"Ticket {req.ticket.sn[:16]} state transition: UNUSED -> PENDING")
 
-    # --- 4. 模拟 PIR 执行 ---
-    try:
-        # # TODO (Day 13): 这里将调用真正的 PIR 引擎
-        # time.sleep(0.5)  # 模拟耗时
-        # pir_result = "dummy_pir_result_for_testing"
+    # --- 4. 通过 HTTP 转发至 PIR Server (网络桥接) ---
+    is_success, pir_result_or_err = await call_pir_server(req.query_payload)
 
-        # 为了测试 FAILED 路径，我们给 execute_query 加一个小后门：如果 query_payload 是特定的触发词，就抛出异常。
-        # 模拟执行耗时，方便我们在测试脚本中捕捉 PENDING 状态
-        time.sleep(1.0)
-
-        # 【新增：故障模拟触发器】
-        if req.query_payload == "trigger_failure_test":
-            raise RuntimeError("Simulated PIR backend crash")
-
-        pir_result = "dummy_pir_result_for_testing"
+    if is_success:
         # --- 5a. 执行成功 -> CONSUMED ---
         state_manager.mark_consumed(req.ticket.sn)
+        final_decision = Decision.SUCCESS
+        final_state = TicketState.CONSUMED
+        reason_msg = "PIR execution completed"
+        pir_data = pir_result_or_err
         logger.info(f"Ticket {req.ticket.sn[:16]} state transition: PENDING -> CONSUMED")
-        return PIRResponse(
-            request_id=req.request_id, decision=Decision.SUCCESS,
-            ticket_state=TicketState.CONSUMED, reason="PIR execution completed", data=pir_result
-        )
-    except Exception as e:
-        # --- 5b. 执行异常 -> FAILED (票据严格烧毁) ---
-        logger.error(f"PIR Execution failed: {e}")
+    else:
+        # --- 5b. 执行异常或超时 -> FAILED (票据严格烧毁) ---
         state_manager.mark_failed(req.ticket.sn)
-        logger.info(f"Ticket {req.ticket.sn[:16]} state transition: PENDING -> FAILED")
-        return PIRResponse(
-            request_id=req.request_id, decision=Decision.REJECTED,
-            ticket_state=TicketState.FAILED, reason="PIR execution failed, ticket burned"
-        )
+        final_decision = Decision.REJECTED
+        final_state = TicketState.FAILED
+        # 坚决不透传底层错误给用户，兼容 Day 12 脚本
+        reason_msg = "PIR execution failed, ticket burned"
+        pir_data = None
+        # 但在日志中记录精细化错误分类，方便后续排障
+        logger.error(f"PIR Execution failed due to [{pir_result_or_err}]. Ticket {req.ticket.sn[:16]} burned (FAILED).")
+    # --- 6. 审计留痕 (当前为本地组装与日志存根，下阶段接后台投递) ---
+    audit_record_stub = {
+        "request_id": req.request_id,
+        "sn": req.ticket.sn,
+        "query_commitment": expected_c_q,
+        "binding_tag": req.binding_tag,
+        "epoch_id": req.ticket.epoch_id,
+        "decision": final_decision.value,
+        "reason": reason_msg,
+        "timestamp_ms": int(time.time() * 1000)
+    }
+    logger.info(
+        f"[Audit Stub] Would report to Auditor: SN={audit_record_stub['sn'][:16]}..., Decision={audit_record_stub['decision']}")
+
+    return PIRResponse(
+        request_id=req.request_id, decision=final_decision,
+        ticket_state=final_state, reason=reason_msg, data=pir_data
+    )
 
 
 if __name__ == "__main__":

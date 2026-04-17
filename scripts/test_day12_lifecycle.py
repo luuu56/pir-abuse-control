@@ -115,6 +115,7 @@ def run_tests():
     assert r4_valid.get(
         "decision") == "SUCCESS", "Test 4 Failed: Valid request should succeed since ticket was not burned"
     assert r4_valid.get("ticket_state") == "CONSUMED", "Test 4 Failed: Ticket should now be CONSUMED"
+    assert "Binding Consistency Check Failed" in r4_tampered.get("reason")
     print(">>> ✅ TEST 4 PASSED: Validation failure did not burn ticket; subsequent valid request succeeded.")
 
     print("\n🎉 ALL LIFECYCLE TESTS PASSED SUCCESSFULLY! 🎉")

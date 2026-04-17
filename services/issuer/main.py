@@ -39,12 +39,12 @@ class ChallengeRequest(BaseModel):
 class ChallengeResponse(BaseModel):
     challenge: str
     epoch_id: int
-    public_key: RSAPublicKeyResponse  # 替换了之前松散的 dict
+    public_key: RSAPublicKeyResponse
 
 
 class IssueRequest(BaseModel):
     blinded_message: str = Field(..., description="Blinded message (Hex string)")
-    admission_proof: str = Field(..., description="Mock proof for Day 8. Must not be empty.")  # 改为必填项
+    admission_proof: str = Field(..., description="Mock proof for Day 8. Must not be empty.")
 
 
 class IssueResponse(BaseModel):
@@ -95,8 +95,9 @@ def blind_sign_endpoint(req: IssueRequest):
     try:
         blind_sig_int = crypto_manager.blind_sign(blinded_msg_int)
 
-        # 统一规范化返回：小写 Hex，无 0x，左补零对其模长 (512字符)
-        blind_sig_hex = f"{blind_sig_int:0{crypto_manager.pad_len}x}"
+        # 【核心修复点】：统一规范化返回：小写 Hex，无 0x，左补零对其模长 Hex 位数
+        # 修正：从 pad_len 改为 pad_len_hex
+        blind_sig_hex = f"{blind_sig_int:0{crypto_manager.pad_len_hex}x}"
 
         logger.info("Successfully generated blind signature.")
         return IssueResponse(blinded_signature=blind_sig_hex)
@@ -105,7 +106,8 @@ def blind_sign_endpoint(req: IssueRequest):
         logger.error(f"Validation error during signing: {ve}")
         raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
-        logger.error(f"Error during blind signing: {e}")
+        # 这里记录详细堆栈，方便万一还有其他问题时排查
+        logger.error(f"Error during blind signing: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Internal signing error")
 
 

@@ -16,21 +16,18 @@ class ClientCryptoManager:
 
     @staticmethod
     def encode_message(sn_hex: str, epoch_id: int) -> int:
-        """
-        【代理到统一编码契约】
-        消除冗余实现，直接复用 common.crypto_utils 的单一事实来源。
-        """
         return encode_ticket_message(sn_hex, epoch_id)
 
     @staticmethod
     def generate_blinding_factor(n: int) -> int:
-        """生成与 n 互质的随机盲因子 r"""
+        """生成与 n 互质的随机盲因子 r，候选范围为 [2, n-1]"""
         if n <= 3:
             raise ValueError("Modulus n must be strictly greater than 3")
 
         while True:
-            r = secrets.randbelow(n)
-            if r > 1 and GCD(r, n) == 1:
+            # randbelow(n-2) 返回 [0, n-3], +2 后范围即为 [2, n-1]
+            r = secrets.randbelow(n - 2) + 2
+            if GCD(r, n) == 1:
                 return r
 
     @staticmethod

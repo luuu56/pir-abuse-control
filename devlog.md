@@ -220,3 +220,174 @@ LOG_N=14 D=8 go test -v -run=BW
 2. 确认数据库初始化、查询生成、响应返回的最小 API
 3. 设计后续 Python -> PIR Engine 的独立进程 / 微服务集成边界
 4. 先做最小可调用 stub，再考虑接入 verifier
+## Day 12：Redis 防重放与票据生命周期流转完成
+
+**日期**：2026-04-17
+
+### 完成内容
+1. **Redis 状态机接入**
+   - 在 Verifier 侧接入 Redis 状态存储
+   - 新增 `services/verifier/state_manager.py`
+   - 明确票据状态机：
+     - `UNUSED`
+     - `PENDING`
+     - `CONSUMED`
+     - `FAILED`
+
+2. **原子防重放与状态流转**
+   - 实现票据序列号 `SN` 的原子占用逻辑
+   - 支持状态流转：
+     - `UNUSED -> PENDING`
+     - `PENDING -> CONSUMED`
+     - `PENDING -> FAILED`
+   - 明确拒绝语义：
+     - 命中 `PENDING`：表示 in-flight / 并发重放
+     - 命中 `CONSUMED`：表示已消费 replay / double spend
+     - 命中 `FAILED`：表示失败烧毁票据不可重用
+   - 前置验证失败不推进票据状态，不误吞票
+
+3. **生命周期联调脚本**
+   - 完成 `scripts/test_day12_lifecycle.py`
+   - 测试脚本已统一接入配置读取：
+     - Verifier URL 从 YAML 配置加载
+     - timeout 从 YAML 配置加载
+   - 并发测试结果改为带标签输出，便于定位 winner / loser
+
+### 联调结果
+已通过以下 4 条关键生命周期验收：
+
+1. **PENDING 分支（并发冲突）**
+   - 同一票据并发提交两个请求
+   - 仅一个请求成功进入处理路径
+   - 另一个请求因命中 `PENDING` 被拒绝
+
+2. **FAILED 分支（异常烧毁）**
+   - 请求触发 PIR 执行失败
+   - 票据状态转为 `FAILED`
+   - 后续重放同票据被直接拒绝，并返回 `Ticket already FAILED`
+
+3. **CONSUMED 分支（正常消费）**
+   - 合法请求执行成功
+   - 票据状态转为 `CONSUMED`
+   - 后续 replay 被拒绝
+
+4. **边界分支（验证失败不吞票）**
+   - 篡改 `binding_tag` 的请求被拒绝
+   - 票据状态保持 `UNUSED`
+   - 随后使用原始合法请求仍可成功消费该票据
+
+### 关键记录
+- Day 12 已不再是 Day 10 的“仅验签 stub”语义，而是开始具备真实消费语义：
+  - 先做签名 / binding 等前置校验
+  - 通过后再原子推进到 `PENDING`
+  - 后续根据 PIR 执行结果转 `CONSUMED` 或 `FAILED`
+- 当前实现已与既定主线保持一致：
+  - `blind ticket -> admission -> binding -> verifier -> PIR -> audit`
+- 当前阶段仍保持：
+  - blind signature 第一版采用 RSA blind signature
+  - PIR 后端采用独立进程 / 微服务集成方向
+  - eBPF 第一版仅做轻量前置过滤，不承担复杂状态逻辑
+
+### 结论
+- Day 12 的 Redis 原子防重放与生命周期状态机已完成
+- Day 12 生命周期联调脚本已通过 4 条关键分支验收
+- 当前下一步应进入：
+  1. Verifier -> Auditor 写入时机定义
+  2. PIR Server stub / 微服务调用打通
+  3. 将当前 PIR stub success 替换为真实 PIR 结果绑定
+
+## Day 13+：Verifier -> PIR Server 网络桥接完成（第一阶段）
+
+**日期**：2026-04-17
+
+### 完成内容
+1. **PIR Server HTTP 适配层**
+   - 新增 `services/pir_server/main.py`
+   - 暴露 `/api/v1/pir/query`
+   - 当前作为 `PIR Server Adapter (Stub)` 运行
+   - 请求协议当前最小化为：
+     - `query_payload`
+   - 内部以 `asyncio.sleep(1.0)` 模拟耗时执行
+   - 保留 `trigger_failure_test` 作为故障注入入口
+
+2. **Verifier 网络桥接改造**
+   - 将 `/api/v1/verifier/execute` 改为 `async def`
+   - 引入 `httpx` 作为跨服务 HTTP 调用客户端
+   - 抽离 `call_pir_server()`，统一承接 Verifier -> PIR Server 的网络桥接
+   - 保持原有前置流程不变：
+     - RSA 签名验证
+     - Binding Consistency Check
+     - Redis 状态机与原子 `PENDING` 锁定
+
+3. **状态推进与远端执行结果绑定**
+   - 当 PIR Server 成功返回时：
+     - `PENDING -> CONSUMED`
+   - 当 PIR Server 抛出异常 / 返回 5xx / 执行失败时：
+     - `PENDING -> FAILED`
+   - 保持 Day 12 既有 reason 语义兼容：
+     - `PIR execution failed, ticket burned`
+
+4. **审计本地存根**
+   - 在 Verifier 中开始本地组装 `audit_record_stub`
+   - 当前仅通过日志记录：
+     - `SN`
+     - `query_commitment`
+     - `binding_tag`
+     - `epoch_id`
+     - `decision`
+     - `reason`
+     - `timestamp_ms`
+   - 当前阶段尚未接入 Auditor HTTP 后台投递
+
+### 联调结果
+在独立启动：
+- `services.issuer.main`
+- `services.verifier.main`
+- `services.pir_server.main`
+
+后，Day 12 生命周期脚本在跨服务模式下再次通过 4 条关键验收：
+
+1. **PENDING 分支（并发冲突）**
+   - 首个请求成功占用票据并进入 PIR Server
+   - 并发重放请求命中 `PENDING` 并被拒绝
+
+2. **FAILED 分支（远端执行失败）**
+   - `trigger_failure_test` 被正确转发到 PIR Server
+   - PIR Server 返回 500
+   - Verifier 将票据状态推进为 `FAILED`
+   - 后续 replay 命中 `FAILED`
+
+3. **CONSUMED 分支（远端执行成功）**
+   - 合法请求被转发至 PIR Server 并成功返回
+   - 票据状态推进为 `CONSUMED`
+   - 后续 replay 命中 `CONSUMED`
+
+4. **边界分支（验证失败不吞票）**
+   - 篡改 binding 的请求被前置验证拒绝
+   - 票据状态保持 `UNUSED`
+   - 随后原始合法请求仍可成功进入 PIR Server 并完成消费
+
+### 关键记录
+- 本轮已确认：
+  - 当前主链路不再依赖 Verifier 内部的本地 `sleep stub`
+  - PIR 执行已从 Verifier 中剥离到独立服务 `pir_server`
+- 本轮已确认：
+  - 网络桥接并未破坏 Day 12 生命周期状态机语义
+  - 当前桥接属于“第一阶段落地”
+- 当前审计仍保持“本地日志存根”策略，避免在同一轮中同时引入：
+  - PIR 微服务桥接
+  - Auditor HTTP 投递
+  - 更复杂的异步审计流转
+
+### 小修记录
+- 修复了 binding reject 分支中 `PIRResponse` 字段拼写错误导致的错误兜底问题
+- 修复后，Test 4 已恢复为预期的业务拒绝路径，而非内部异常路径
+
+### 结论
+- Day 13+ 第一阶段：Verifier -> PIR Server 网络桥接已完成
+- PIR 执行结果已与票据状态流转绑定
+- Day 12 生命周期在跨服务模式下回归通过
+- 当前下一步应进入：
+  1. Auditor HTTP 存根搭建
+  2. 审计记录字段与模型对齐
+  3. 后台投递方式的最小闭环验证

@@ -14,224 +14,32 @@
 
 ## 二、当前阶段结论
 
-当前项目已经完成从 **Issuer -> Client -> Verifier** 的第一段闭环，且已经通过端到端联调验证。
+当前项目已经完成从 **Issuer -> Client -> Verifier** 的第一段闭环，并进一步完成了：
+
+- Binding 验证
+- Redis 原子防重放与票据生命周期流转
+- Verifier -> PIR Server 的第一阶段网络桥接
 
 当前已完成：
-### Day 1：开发环境搭建
-已完成：
 
-- 项目开发环境已迁移到 **WSL Linux 文件系统**
-- 当前主目录位于：
-  - `/home/lu56/pir-abuse-control`
-- 已确认：
-  - Python 可正常运行
-  - Git 可正常运行
-  - PyCharm 已连接到 WSL 项目目录
-  - 运行解释器已指向各服务自己的 `.venv`
+- Issuer blind-sign API
+- Client blind / unblind 与 ticket acquisition
+- Verifier RSA signature verification
+- Binding Tag 生成与校验
+- Redis 原子防重放与票据生命周期流转
+- PIR Server HTTP 适配层（Stub）
+- Verifier 跨服务调用 PIR Server
+- 审计本地日志存根
 
-当前环境分层约定：
+当前 Day 12 生命周期在跨服务模式下已再次通过 4 条关键验收：
 
-- 前期开发与联调：WSL2 Ubuntu
-- 后续 eBPF/XDP 与正式性能评估：原生 Linux / 远程服务器
+1. 并发冲突命中 `PENDING`
+2. PIR 执行失败后票据转 `FAILED`
+3. 正常执行后票据转 `CONSUMED`
+4. 前置验证失败不吞票，票据保持 `UNUSED`
 
-### Day 2：项目初始化与 Git 建仓
-已完成：
+因此，当前项目已经从“本地 stub 语义的 verifier”进入“可将合法请求跨服务转发至 PIR Server，并基于真实远端结果推进状态”的阶段。
 
-- Git 仓库初始化完成
-- 基础目录结构完成
-- `.gitignore` 已建立
-- `README.md`、`TODO.md`、`devlog.md` 已建立
-- 项目已经开始持续 commit
-
-当前目录结构主干已固定为：
-
-- `common/`
-- `services/`
-  - `issuer/`
-  - `client/`
-  - `verifier/`
-  - `pir_server/`
-  - `auditor/`
-- `experiments/`
-- `configs/`
-- `scripts/`
-- `logs/`
-- `results/`
-- `docs/`
-
-### Day 3：环境隔离
-已完成：
-
-- 各服务独立 `.venv` 已创建：
-  - `services/issuer/.venv`
-  - `services/client/.venv`
-  - `services/verifier/.venv`
-  - `services/pir_server/.venv`
-  - `services/auditor/.venv`
-  - `experiments/.venv`
-- 各服务 `requirements.txt` 已建立
-- 当前所有服务均以“模块独立环境”的方式运行
-
-当前工程约束：
-
-- 不同服务不得长期混用同一 Python 环境
-- 依赖安装应尽量写回各自 `requirements.txt`
-
-### Day 4：PyCharm 接入 WSL 工程
-已完成：
-
-- PyCharm 已切换到 WSL Linux 文件系统中的项目目录
-- 当前工程不再使用 Windows 盘路径 `E:\...` 作为主开发视图
-- 至少 `issuer / verifier / client` 等服务已能在 PyCharm 中通过各自解释器正常运行
-- 模块运行方式已统一为：
-
-```bash
-python -m services.issuer.main
-python -m services.client.main
-python -m services.verifier.main
-python -m services.pir_server.main
-python -m services.auditor.main
-```
-当前约束：
-
-- 不再推荐直接执行脚本路径 `python services/xxx/main.py`
-- 统一使用 `python -m services.xxx.main` 以避免包导入路径漂移
-
-### Day 5：统一配置与日志骨架
-
-已完成：
-
-- 已建立统一配置文件：
-  - `configs/common/base.yaml`
-- 已建立公共模块：
-  - `common/config.py`
-  - `common/logging_utils.py`
-- 所有核心服务已统一接入：
-  - YAML 配置读取
-  - 标准 logging 输出
-- 当前各服务 bootstrap 已统一，并已成功生成对应日志文件
-
-当前固定工程约束：
-
-- 所有 Python 服务都必须使用统一 YAML 配置
-- 所有 Python 服务都必须使用统一 logging 格式
-- 公共配置与日志初始化逻辑统一复用 `common/` 下模块
-- 不允许各服务后续各自私建独立的配置/日志风格
-
-### Day 6：关键技术选型定稿
-
-以下文档已经基本定稿：
-
-1. `docs/blind_signature_choice.md`
-
-已确认：
-
-- 第一版 blind signature 固定为 RSA blind signature
-- 第一版基于 `pycryptodome` 提供 RSA 基础能力
-- 盲化、签发、去盲、验证流程由项目侧自行落地
-- 完整验签逻辑位于用户态 Verifier
-- eBPF 层不承担非对称加密验签
-
-2. `docs/pir_backend_choice.md`
-
-已确认：
-
-- 主候选 PIR 后端：**SimplePIR**
-- 备选：Spiral 或轻量级真实 PIR baseline
-- Mock PIR 仅允许用于前期控制链联调
-- **Mock PIR 严禁**作为最终实验或论文评估后端
-- PIR 后端采用：
-  - 独立进程 / 微服务集成
-  - 由 `pir_server` 通过 subprocess / 本地 Socket / RPC 调用
-
-3. `docs/stack.md`
-
-已确认：
-
-- 当前开发语言：Python 3.13
-- 控制层服务：FastAPI + Uvicorn
-- 状态存储：Redis
-- 控制层通信：HTTP JSON
-- 数据执行层：PIR 独立进程集成
-- `common`、`issuer`、`verifier`、`client`、`pir_server`、`auditor` 的依赖边界已基本明确
-
-### Day 7：对象模型、接口和时序草案对齐
-
-当前 Day 7 文档已进入“接近定稿/持续收口”状态，主要包括：
-
-1. `docs/object_model.md`
-
-已逐步对齐的核心对象：
-
-- Ticket：`t = (SN, sigma, EpochID)`
-- RequestInstance：`r = (q, t, b, w)`
-- 状态机：
-  - UNUSED
-  - PENDING
-  - CONSUMED
-  - FAILED
-- 绑定语义：
-  - `c_q = H(q)`
-  - `b = HMAC(sk_t, c_q || w)`
-
-2. `docs/api.md`
-
-已逐步对齐的服务边界：
-
-- Issuer
-- Verifier
-- PIR Server
-- Auditor
-
-3. `docs/sequence.md`
-
-已逐步明确的执行链：
-
-- Issuance
-- Binding
-- Request
-- Pre-Verify
-- Atomic Lock
-- Forward
-- Execute
-- Finalize
-- Audit
-- Response
-
-4. `common/models.py`
-
-已开始承接工程级对象定义，用于后续 FastAPI / schema / verifier 逻辑实现。
-### Day 8：Issuer Blind-Sign API**
-   - `services/issuer/crypto.py` 已完成
-   - `services/issuer/main.py` 已完成
-   - `/api/v1/issuer/challenge` 可返回 `challenge + epoch_id + public_key`
-   - `/api/v1/issuer/issue` 可对 blinded message 执行 textbook RSA 模幂签名
-
- ### Day 9：Client Blind/Unblind & Ticket 获取**
-   - `services/client/crypto.py` 已完成
-   - `services/client/main.py` 已完成
-   - 已实现：
-     - `SN` 生成
-     - `SN || EpochID` 编码
-     - 盲因子 `r` 生成
-     - blind / issue / unblind
-     - 本地验签 `pow(s, e, n) == m`
-   - 可成功组装 `Ticket(sn, sigma, epoch_id)`
-
- ### Day 10：Verifier 票据验签**
-   - `common/crypto_utils.py` 已新增
-   - `services/verifier/crypto.py` 已完成
-   - `services/verifier/main.py` 已完成
-   - Verifier 启动时可从 Issuer 拉取并缓存公钥
-   - `/api/v1/verifier/execute` 当前已实现 **RSA 签名验证前半段**
-   - 端到端正反例联调已通过：
-     - 合法 Ticket -> `SUCCESS`
-     - 篡改 `SN` -> `REJECTED`
-     - 篡改 `sigma` -> `REJECTED`
-
-### 
-
----
 
 ## 三、当前已经固化的关键工程契约
 
@@ -290,39 +98,40 @@ python -m services.auditor.main
 
 ## 四、当前 Verifier 的真实语义边界
 
-当前 `/api/v1/verifier/execute` 的实现仍是 **Day 10 stub 版本**：
+当前 `/api/v1/verifier/execute` 已具备如下真实语义：
 
-已做：
+当前已做：
 
 - 接收 `RequestInstance`
-- 提取 `ticket`
+- 提取并校验 `ticket`
 - 校验 RSA 签名是否有效
+- 校验 binding 是否一致
+- 查询并推进 Redis 状态机
+- 在进入后端执行前将票据原子推进为 `PENDING`
+- 通过 HTTP 将合法请求转发至 `PIR Server`
+- 根据 PIR Server 返回结果将票据推进为：
+  - `CONSUMED`
+  - `FAILED`
 
-未做：
+当前拒绝语义已明确：
 
-- Binding Tag 验证
-- Redis 原子防重放
-- 状态流转
-- PIR 转发
-- Auditor 写入
+- `PENDING`：表示 in-flight / 并发 replay
+- `CONSUMED`：表示 double spend / replay after success
+- `FAILED`：表示 burned ticket / replay after execution failure
+- 前置验证失败：请求被拒绝，但票据状态保持 `UNUSED`
 
-因此当前返回：
+当前审计语义：
 
-- `SUCCESS`
+- Verifier 已开始在本地组装审计分录存根
+- 当前仅以日志形式留痕
+- Auditor HTTP 投递尚未接入主链路
 
-只表示：
+当前仍未完全做完：
 
-- **票据签名验证通过**
-
-并不表示：
-
-- 绑定验证已通过
-- 票据已消费
-- PIR 已执行成功
-
-后续必须用完整流程替换当前 stub 语义。
-
----
+- Auditor 服务 HTTP 存根
+- Verifier -> Auditor 的后台上报
+- 审计查询接口
+- 真实 Go SimplePIR 进程 / 微服务集成（当前仍为 Python stub adapter）
 
 ## 五、当前对象与请求模型状态
 
@@ -371,38 +180,45 @@ python -m services.auditor.main
 
 ## 七、当前最值得继续推进的方向
 
-### 下一阶段：Day 11 - Binding 验证
+### 下一阶段：Auditor / 审计闭环（第二阶段）
 目标：
 
-- 开始让 `binding_tag` 与 `query_payload / witness / ticket` 产生真实约束
+- 在不破坏当前已稳定的 Verifier -> PIR Server 主链路的前提下
+- 为放行 / 拒绝 / 核销结果增加可接收、可查询、可追溯的最小审计落点
 
 需要完成：
 
-1. 明确 `sk_t` 的工程派生方式
-2. 实现 `query_commitment = H(q)`
-3. 明确 Witness 的规范化序列化方式
-4. 实现 `binding_tag = HMAC(sk_t, c_q || w)`
-5. 在 Verifier 中加入 binding 校验
+1. 建立 `services/auditor/main.py`
+2. 暴露 `/api/v1/auditor/report`
+3. 将当前 `[Audit Stub]` 升级为后台 HTTP 上报
+4. 明确 `AuditRecord` 字段与 `common.models` 对齐
+5. 验证 Auditor 不可用时不影响 Verifier 主返回
 
-### 再下一阶段：Day 12 - Redis 状态机与防重放
+### 再下一阶段：PIR 协议与真实后端收口（第三阶段）
 目标：
 
-- 从“只验签”进入“可消费 ticket 的 verifier”
+- 将当前 Python stub adapter 逐步推进到真实 PIR 后端边界
 
 需要完成：
 
-1. 接入 Redis
-2. 实现 `SETNX SN PENDING`
-3. 明确状态流转：
-   - `UNUSED -> PENDING`
-   - `PENDING -> CONSUMED`
-   - `PENDING -> FAILED`
-4. 明确拒绝语义：
-   - `PENDING` -> in-flight / replay
-   - `CONSUMED` -> double spend
-   - `FAILED` -> burned ticket
+1. 抽取 PIR 请求/响应公共模型
+2. 明确 Python 控制层与 PIR 适配层的正式输入输出协议
+3. 将当前 `pir_server` stub 与真实 Go SimplePIR 调用边界对接
+4. 保持 `SUCCESS / FAILED` 与真实 PIR 执行结果绑定
 
----
+### 当前不应轻易改动的部分
+
+以下内容已经通过文档、实现与联调逐步固化，短期内不应轻易推翻：
+
+- blind signature 第一版使用 RSA blind signature
+- 主线仍为 `blind ticket -> admission -> binding -> verifier -> PIR -> audit`
+- ticket 结构仍为 `t = (SN, sigma, EpochID)`
+- ticket 被签消息编码仍为 `SN || EpochID`
+- 状态机仍为 `UNUSED / PENDING / CONSUMED / FAILED`
+- PIR 后端仍保持独立进程 / 微服务集成方向
+- eBPF 仍只做轻量前置过滤
+- 当前审计仍先走最小存根，再逐步接后台投递
+- 项目继续优先“小修收口”，避免中途大重构
 
 ## 八、当前不应轻易改动的部分
 
@@ -426,10 +242,13 @@ python -m services.auditor.main
 - **Issuer blind-sign**
 - **Client ticket acquisition**
 - **Verifier ticket signature verification**
+- **Binding Tag verification**
+- **Redis 原子防重放与生命周期状态机**
+- **Verifier -> PIR Server 网络桥接（第一阶段）**
 
-并已通过 Day 10 正反例端到端联调。
+并已确认 Day 12 生命周期在跨服务模式下回归通过。
 
 当前下一步应集中到：
 
-- **Binding Tag 验证**
-- **Redis 原子防重放与状态流转**
+- **Auditor HTTP 存根与最小审计闭环**
+- **PIR 适配层协议收口与真实后端边界对接**
