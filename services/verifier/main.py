@@ -17,7 +17,8 @@ from common.config import load_config
 from common.logging_utils import setup_logger
 from common.models import RequestInstance, PIRResponse, Decision, TicketState
 from services.verifier.crypto import crypto_manager
-from services.verifier.state_manager import state_manager
+# --- 改动 1: 引入懒加载管理器获取函数 ---
+from services.verifier.state_manager import get_state_manager
 from common.crypto_utils import (
     derive_sk_t, compute_query_commitment,
     serialize_witness, compute_binding_tag,
@@ -81,6 +82,26 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="PIR Abuse Control - Verifier Service", version="1.0", lifespan=lifespan)
 
 
+# --- 改动 2: 新增外部查询只读接口 (Day 22 验收点) ---
+@app.get("/api/v1/verifier/ticket_state/{sn}")
+async def query_ticket_state(sn: str):
+    """
+    Day 22: 提供对外的只读票据状态查询接口。
+    用于后续 Auditor 对账、或 Client 查询自己的票据是否已被核销。
+    """
+    sn = sn.lower()
+    is_hex = len(sn) == 64 and all(c in "0123456789abcdef" for c in sn)
+    if not is_hex:
+        raise HTTPException(status_code=400, detail="Invalid SN format: must be 64-char hex")
+
+    sm = get_state_manager()
+    state = sm.get_state(sn)
+    return {
+        "sn": sn,
+        "ticket_state": state.value
+    }
+
+
 # --- 独立封装的网络桥接层 ---
 async def call_pir_server(query_payload: str) -> tuple[bool, str]:
     """
@@ -136,8 +157,10 @@ async def execute_query(req: RequestInstance):
             reason=f"Ticket epoch {req.ticket.epoch_id} has expired."
         )
 
+    sm = get_state_manager()
+
     # --- 1. 检查当前状态 (拦截非 UNUSED 状态的票据) ---
-    current_state = state_manager.get_state(req.ticket.sn)
+    current_state = sm.get_state(req.ticket.sn)
     if current_state in (TicketState.CONSUMED, TicketState.PENDING, TicketState.FAILED):
         logger.warning(f"Request {req.request_id} REJECTED: Ticket is {current_state.value}")
         return PIRResponse(
@@ -195,7 +218,7 @@ async def execute_query(req: RequestInstance):
                            ticket_state=TicketState.UNUSED, reason="Invalid Binding Material")
 
     # --- 4. 原子锁定为 PENDING (防双花) ---
-    if not state_manager.try_lock(req.ticket.sn, lock_ttl_sec=30):
+    if not sm.try_lock(req.ticket.sn, lock_ttl_sec=30):
         logger.warning(f"Request {req.request_id} REJECTED: Failed to lock ticket (Concurrency attack?)")
         return PIRResponse(
             request_id=req.request_id, decision=Decision.REJECTED,
@@ -207,16 +230,16 @@ async def execute_query(req: RequestInstance):
     is_success, pir_result_or_err = await call_pir_server(req.query_payload)
 
     if is_success:
-        # --- 6a. 执行成功 -> CONSUMED ---
-        state_manager.mark_consumed(req.ticket.sn)
+        # --- 6a. 执行成功 -> CONSUMED (改动 3: 传入 epoch_id 驱动 TTL) ---
+        sm.mark_consumed(req.ticket.sn, epoch_id=req.ticket.epoch_id)
         final_decision = Decision.SUCCESS
         final_state = TicketState.CONSUMED
         reason_msg = "PIR execution completed"
         pir_data = pir_result_or_err
         logger.info(f"Ticket {req.ticket.sn[:16]} state transition: PENDING -> CONSUMED")
     else:
-        # --- 6b. 执行异常或超时 -> FAILED (票据严格烧毁) ---
-        state_manager.mark_failed(req.ticket.sn)
+        # --- 6b. 执行异常或超时 -> FAILED (票据严格烧毁，传入 epoch_id 驱动 TTL) ---
+        sm.mark_failed(req.ticket.sn, epoch_id=req.ticket.epoch_id)
         final_decision = Decision.REJECTED
         final_state = TicketState.FAILED
         # 坚决不透传底层错误给用户，兼容 Day 12 脚本
