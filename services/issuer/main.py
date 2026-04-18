@@ -59,6 +59,11 @@ redis_client = redis.Redis(
 )
 
 # --- 2. 初始化 FastAPI ---
+# --- 在 services/issuer/main.py 顶部补回这个模型 ---
+class RSAPublicKeyResponse(BaseModel):
+    n: str = Field(..., description="RSA Modulus (Hex string, lower case, zero-padded, no '0x')")
+    e: str = Field(..., description="RSA Public Exponent (Hex string)")
+
 app = FastAPI(title="PIR Abuse Control - Issuer Service", version="1.1")
 
 
@@ -109,6 +114,11 @@ def verify_admission_logic(proof: AdmissionResponse) -> tuple[bool, str, Optiona
 def health_check():
     return {"status": "ok", "service": "issuer", "redis": redis_client.ping()}
 
+# services/issuer/main.py 新增接口
+@app.get("/api/v1/issuer/public_key", response_model=RSAPublicKeyResponse)
+async def get_public_key():
+    """获取 Issuer 动态生成的 RSA 公钥 (Client/Verifier 统一从这里拉取)"""
+    return crypto_manager.get_public_key()
 
 @app.post("/api/v1/issuer/challenge", response_model=AdmissionChallenge)
 async def request_challenge(req: ChallengeRequest):

@@ -530,3 +530,88 @@ LOG_N=14 D=8 go test -v -run=BW
 ### 下一步
 - 进入 Day 17：blind ticket + admission 整合
 - 目标是在不破坏现有 Ticket / Binding / Redis 生命周期契约的前提下，将 admission 与 blind issue 串成一条完整签发链
+
+## 2026-04-18
+
+## Day 17：blind ticket + admission 整合完成
+
+### 完成内容
+1. **Client 票据获取主链重构**
+   - `services/client/main.py` 中的 `acquire_ticket()` 已整合为完整签票主链：
+     1. 获取 Issuer 真实 RSA 公钥
+     2. 请求 admission challenge
+     3. 本地执行 PoW
+     4. 生成 `SN`
+     5. 构造并提交 `blinded_message + admission_proof`
+     6. 接收 blind signature
+     7. 去盲并本地验签
+     8. 输出最终 `Ticket(sn, sigma, epoch_id)`
+
+2. **Issuer 公钥获取接口落地**
+   - 在 `services/issuer/main.py` 中新增：
+     - `GET /api/v1/issuer/public_key`
+   - Client 现已不再依赖本地公钥 stub fallback
+   - 公钥来源统一收口到 Issuer 真实网络视图
+
+3. **命名收口**
+   - 将 client 配置中的 `client_id` 收口为 `client_tag`
+   - 保持与 admission 侧“短时上下文标识”的语义一致
+
+4. **Day 17 验收脚本**
+   - 新增：
+     - `scripts/test_day17_chain.py`
+       - 用于最小签票链路验收
+     - `scripts/test_day17_full_e2e.py`
+       - 用于全链路烟雾测试
+       - 覆盖：
+         - Client
+         - Admission (PoW)
+         - Issuer
+         - Binding
+         - Verifier
+         - PIR Server
+
+### 运行结果
+#### Day 17+ Full E2E Smoke Test
+执行：
+- `python scripts/test_day17_full_e2e.py`
+
+结果：
+1. Phase 1: Ticket Acquisition (PoW + Blind Sign)
+   - challenge 成功
+   - PoW 求解成功
+   - blind sign 成功
+   - 本地去盲与验签成功
+   - Ticket 获取成功
+
+2. Phase 2: Payload Binding
+   - `create_bound_request()` 成功
+   - binding tag 生成成功
+
+3. Phase 3: Verifier Execution & PIR Bridge
+   - 请求成功发送至 Verifier
+   - Verifier 返回 `decision=SUCCESS`
+   - PIR 执行成功并返回结果
+
+关键日志：
+- `Local verification passed: Signature is valid.`
+- `🎉 [PASS] Full End-to-End Flow is Functional!`
+
+### 关键结论
+- Day 17 目标已完成：
+  - admission 通过后执行 blind-sign
+  - 输出最终 ticket
+  - admission 与 blind issue 已串为一条链
+- 且该链路已在更大的主线中通过一次真实烟雾测试：
+  - `Client -> Admission -> Issuer -> Binding -> Verifier -> PIR`
+
+### 当前限制 / 备注
+- issuer / client 日志当前仍打印原始 `client_tag`
+- 后续应收口为 hash 截断值，以满足 admission 日志脱敏契约
+- `scripts/test_day17_full_e2e.py` 当前已较稳，但错误提示中仍可进一步统一从配置生成
+
+### 下一步建议
+优先继续做端到端联调 / 回归脚本收口，而不是立即深挖 Auditor。
+原因：
+- 主链刚打通，先巩固回归最划算
+- 当前项目执行规则仍是：主链路没通前，不深挖高级审计和兼容性

@@ -17,6 +17,7 @@
 当前项目已经完成从 **Issuer -> Client -> Verifier** 的第一段闭环，并进一步完成了：
 
 - Admission primitive 第一版落地
+- blind ticket 与 admission 的主链整合
 - Binding 验证
 - Redis 原子防重放与票据生命周期流转
 - Verifier -> PIR Server 的第一阶段网络桥接
@@ -26,7 +27,9 @@
 
 - Issuer blind-sign API
 - Issuer admission challenge / verify_admission / issue 内联 admission 校验
+- Issuer 公钥真实接口：`GET /api/v1/issuer/public_key`
 - Client blind / unblind 与 ticket acquisition
+- Client 侧 admission -> blind issue -> unblind -> local verify 整合主链
 - Verifier RSA signature verification
 - Binding Tag 生成与校验
 - Redis 原子防重放与票据生命周期流转
@@ -42,7 +45,7 @@
 3. 正常执行后票据转 `CONSUMED`
 4. 前置验证失败不吞票，票据保持 `UNUSED`
 
-当前 Day 13 blind-sign 全链路联调也已完成：
+当前 Day 13 blind-sign 全链路联调已完成：
 
 - blind issue
 - unblind
@@ -64,7 +67,21 @@
 3. 正确 challenge + 错误 nonce -> `/issue` 返回 403
 4. 同一 challenge 连续 issue 两次 -> 第一次 200，第二次 403（Redis burn semantics 生效）
 
-因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链路稳定、admission 第一版落地、生命周期状态机稳定、并可跨服务转发至 PIR Server”的阶段。
+当前 Day 17 blind ticket + admission 已完成整合，并通过最小链路与全链路烟雾测试：
+
+1. `challenge` 申请成功
+2. PoW 求解成功
+3. `/issue` 完成 blind sign
+4. Client 去盲成功
+5. Client 本地验签成功
+6. 成功输出最终 `Ticket`
+7. 全链路烟雾测试通过：
+   - Binding 成功
+   - Verifier 放行成功
+   - PIR Server 返回成功
+   - 最终 `decision = SUCCESS`
+
+因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、生命周期状态机稳定、并可跨服务转发至 PIR Server”的阶段。
 
 ---
 
@@ -129,11 +146,11 @@
 - 服务启动时在内存中动态生成 RSA key pair
 - 每次重启都会更换 key
 
-因此当前 Verifier 采取的策略是：
+因此当前 Client / Verifier 采取的策略是：
 
-- 启动时主动向 Issuer 拉取公钥
-- 本地缓存 `(n, e)`
-- 若刷新失败，则清空缓存，避免带着旧 key 工作
+- 从 Issuer 真实网络接口获取公钥
+- 不再依赖本地硬编码公钥 stub
+- 若刷新失败，则拒绝继续基于旧 key 工作
 
 这只是当前原型阶段策略，后续若进入稳定阶段需要考虑持久化或固定 key 管理。
 
@@ -239,6 +256,8 @@
 9. Day 13 blind-sign 全链路正反例已通过
 10. Day 14 `tests/test_crypto_core.py` 已通过（6 passed）
 11. Day 16 admission primitive 第一版反例验收已通过
+12. Day 17 blind ticket + admission 整合链路已通过
+13. Day 17+ 全链路烟雾测试已通过
 
 ### 已有脚本 / 测试
 - `scripts/test_ticket_flow.sh`
@@ -251,6 +270,10 @@
   - 验证生命周期状态机
 - `scripts/test_day13_blind_link.py`
   - 验证 blind-sign 全链路正反例
+- `scripts/test_day17_chain.py`
+  - 验证 blind ticket + admission 最小链路
+- `scripts/test_day17_full_e2e.py`
+  - 验证 `Client -> Admission -> Issuer -> Binding -> Verifier -> PIR Server` 主线烟雾测试
 - `tests/test_crypto_core.py`
   - blind-sign / verify 核心单测
 
@@ -258,22 +281,24 @@
 
 ## 七、当前最值得继续推进的方向
 
-### 下一阶段：Day 17 blind ticket + admission 整合
+### 下一阶段：端到端联调 / 回归巩固（优先）
 目标：
 
-- 将 admission 与 blind issue 串成一条完整签发链
-- 保持 admission 不通过不能签票
-- 不破坏当前 Ticket 编码契约、binding 契约与 Redis 生命周期语义
+- 在主链刚刚打通的前提下，先巩固 blind ticket + admission + binding + verifier + PIR Server 的整体回归能力
+- 避免在主链尚未稳定前过早引入更复杂的审计与兼容性逻辑
 
 需要完成：
 
-1. 收口 Client 侧 challenge -> solve_pow -> issue 提交流程
-2. 让 blind ticket 获取流程默认携带合法 `admission_proof`
-3. 增加 Day 17 端到端脚本，验证：
-   - 正常 admission + blind issue 成功
+1. 继续完善端到端联调 / 回归脚本
+2. 固化 Day 17+ 主链的最小回归集合
+3. 验证：
    - admission 缺失失败
    - challenge 重放失败
-   - admission 不通过无法获得合法 Ticket
+   - blind issue 正常成功
+   - binding 正常成功
+   - verifier 放行成功
+   - PIR success / failure 分支均与状态机一致
+4. 保证主链刚打通时不被后续高级功能回归打坏
 
 ### 再下一阶段：Auditor / 审计闭环（第二阶段）
 目标：
@@ -326,16 +351,17 @@
 - **Issuer blind-sign**
 - **Client ticket acquisition**
 - **Admission primitive 第一版**
+- **blind ticket + admission 整合**
 - **Verifier ticket signature verification**
 - **Binding Tag verification**
 - **Redis 原子防重放与生命周期状态机**
 - **Verifier -> PIR Server 网络桥接（第一阶段）**
 - **blind-sign / verify 第一批核心单测**
 
-并已确认 Day 12 生命周期在跨服务模式下回归通过、Day 13 blind-sign 全链路联调完成、Day 14 第一批核心单测通过、Day 16 admission primitive 第一版反例验收通过。
+并已确认 Day 12 生命周期在跨服务模式下回归通过、Day 13 blind-sign 全链路联调完成、Day 14 第一批核心单测通过、Day 16 admission primitive 第一版反例验收通过、Day 17 blind ticket + admission 整合与 Day 17+ 全链路烟雾测试通过。
 
 当前下一步应集中到：
 
-- **Day 17：blind ticket + admission 整合**
+- **端到端联调 / 回归巩固**
 - **Auditor HTTP 存根与最小审计闭环**
 - **PIR 适配层协议收口与真实后端边界对接**

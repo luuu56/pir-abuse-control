@@ -212,13 +212,40 @@
 - [ ] 将 issuer 日志中的原始 `client_tag` 改为 hash 截断值
 - [ ] 将 Day 16 结果同步进文档 `docs/admission.md`（若尚未落盘）
 ---
+## Day 17：blind ticket + admission 整合
+- [x] 将 `services/client/main.py` 中的 `acquire_ticket()` 收口为完整签发链
+- [x] Client 先调用 `GET /api/v1/issuer/public_key` 获取 Issuer 真实 RSA 公钥
+- [x] Client 调用 `POST /api/v1/issuer/challenge` 获取 admission challenge
+- [x] Client 本地执行 `solve_pow()` 完成 Interactive Hashcash PoW
+- [x] Client 将 `blinded_message + admission_proof` 一并提交到 `POST /api/v1/issuer/issue`
+- [x] Issuer 在 `/issue` 中完成 admission 校验通过后再执行 blind sign
+- [x] Client 完成去盲并执行本地验签
+- [x] Client 最终输出 `Ticket(sn, sigma, epoch_id)`
+- [x] 将 client 侧配置命名从 `client_id` 收口为 `client_tag`
+- [x] 新增 `GET /api/v1/issuer/public_key`，移除 client 端本地公钥 stub fallback
+- [x] 新增 `scripts/test_day17_chain.py`
+- [x] 新增 `scripts/test_day17_full_e2e.py`
 
-## 小收口（非阻塞）
-- [ ] 将 FastAPI `@app.on_event("startup")` 逐步替换为 lifespan
-- [ ] 测试脚本统一从配置读取 URL / timeout
-- [ ] 补充 `devlog.md`：记录 Day 9 / Day 10 正反例联调结论
-- [ ] 将 Day 10 已验证的 Ticket 编码与 sigma 编码约定同步到文档
-- [ ] 增加 verifier 单元测试（纯函数级验签测试）
+### Day 17 验收结果
+- [x] admission 通过后执行 blind-sign
+- [x] 成功输出最终 `Ticket`
+- [x] admission 与 blind issue 已串为一条链
+- [x] 本地去盲后验签通过
+- [x] Day 17+ 全链路烟雾测试通过：
+  - [x] Client -> Admission(PoW) -> Issuer -> Binding -> Verifier -> PIR Server 全链路成功
+  - [x] Verifier 返回 `decision=SUCCESS`
+  - [x] PIR 返回成功结果
+
+### Day 17 结论
+- [x] Day 17 已完成
+- [x] Ticket 获取主链已从“blind-sign + admission”角度完成整合
+- [x] 当前已具备继续做更稳定端到端回归或推进 Auditor 的基础
+
+### Day 17 小收尾
+- [ ] 将 issuer/client 日志中的原始 `client_tag` 收口为 hash 截断值
+- [ ] 将 `scripts/test_day17_full_e2e.py` 中 issuer / pir_server 连接提示也改为从配置打印
+- [ ] 将 Day 17 结果同步到 `docs/admission.md` / 相关设计文档（如尚未补齐）
+
 
 ---
 
