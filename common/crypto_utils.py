@@ -1,3 +1,4 @@
+# common/crypto_utils.py
 import hashlib
 import hmac
 import json
@@ -93,3 +94,55 @@ def compute_binding_tag(sk_t: bytes, c_q_hex: str, witness_bytes: bytes) -> str:
     msg = c_q_hex.encode("utf-8") + witness_bytes
     mac = hmac.new(sk_t, msg, hashlib.sha256)
     return mac.hexdigest()
+
+
+# --- Day 16: 准入原语相关的密码学实现 ---
+
+def canonical_json_bytes(obj: dict) -> bytes:
+    """【硬性契约】规范化 JSON 序列化，确保跨服务 HMAC 一致性"""
+    return json.dumps(
+        obj,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False
+    ).encode("utf-8")
+
+
+def compute_hmac(key: str, data: bytes) -> str:
+    """计算 HMAC-SHA256 并返回 Hex 字符串"""
+    return hmac.new(key.encode("utf-8"), data, hashlib.sha256).hexdigest()
+
+
+def verify_pow(payload_bytes: bytes, hmac_sig_hex: str, nonce: int, difficulty_bits: int) -> bool:
+    """验证工作量证明，包含严格边界检查"""
+    if not (1 <= difficulty_bits <= 256):
+        raise ValueError(f"Invalid difficulty bits: {difficulty_bits}")
+    if not (0 <= nonce < 2 ** 64):
+        raise ValueError("Nonce out of uint64 range")
+
+    h = hashlib.sha256()
+    h.update(payload_bytes)
+    h.update(bytes.fromhex(hmac_sig_hex))
+    h.update(nonce.to_bytes(8, byteorder="big"))
+
+    hash_int = int.from_bytes(h.digest(), byteorder="big")
+    return (hash_int >> (256 - difficulty_bits)) == 0
+
+
+def solve_pow(payload_bytes: bytes, hmac_sig_hex: str, difficulty_bits: int) -> int:
+    """求解器，包含对称的边界检查与安全熔断"""
+    if not (1 <= difficulty_bits <= 256):
+        raise ValueError(f"Invalid difficulty bits: {difficulty_bits}")
+
+    prefix = payload_bytes + bytes.fromhex(hmac_sig_hex)
+    target_shift = 256 - difficulty_bits
+
+    # 防止死循环溢出，限制在 uint64 空间内穷举
+    for nonce in range(2 ** 64):
+        h = hashlib.sha256()
+        h.update(prefix)
+        h.update(nonce.to_bytes(8, byteorder="big"))
+        if (int.from_bytes(h.digest(), byteorder="big") >> target_shift) == 0:
+            return nonce
+
+    raise RuntimeError("Failed to solve PoW within uint64 space")

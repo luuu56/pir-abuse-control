@@ -1,3 +1,4 @@
+# common/models.py
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from enum import Enum
@@ -58,3 +59,36 @@ class PIRResponse(BaseModel):
     ticket_state: Optional[TicketState] = None  # 反馈票据最终状态
     reason: Optional[str] = None
     data: Optional[Any] = None
+
+# --- 准入原语相关模型 (Day 16 新增/修改) ---
+
+class AdmissionPayload(BaseModel):
+    """HMAC 签名的原始载荷"""
+    client_tag: str = Field(..., description="Short-lived context tag")
+    epoch_id: int = Field(..., description="Day 16 stub: currently fixed at 1")
+    difficulty: int = Field(ge=1, le=256)
+    issued_at: int
+    expires_at: int
+    server_nonce: str
+
+class AdmissionChallenge(BaseModel):
+    """下发给客户端的挑战包裹"""
+    payload: AdmissionPayload
+    hmac_sig: str  # Hex
+
+class AdmissionResponse(BaseModel):
+    """客户端提交的证明"""
+    challenge: AdmissionChallenge
+    nonce: int = Field(ge=0, lt=2**64) # 显式约束 uint64 空间，防止溢出
+
+class ChallengeRequest(BaseModel):
+    client_tag: str = Field(..., min_length=1)
+
+class IssueRequest(BaseModel):
+    blinded_message: str = Field(..., description="Blinded message (Hex string)")
+    admission_proof: AdmissionResponse  # 替换原来的 dummy_proof 占位符
+
+# common/models.py 底部补充
+
+class IssueResponse(BaseModel):
+    blinded_signature: str = Field(..., description="Blind signature s' (Hex string, zero-padded, no '0x')")

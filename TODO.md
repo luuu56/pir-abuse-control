@@ -172,26 +172,45 @@
 - [x] 清理错误码和 API 语义
 - [x] 保持 blind-sign 为唯一主线，不再保留普通签名占位
 
-### Day 13+：Verifier / PIR Server 串联（第一阶段）
-- [x] 建立 `services/pir_server/main.py` HTTP 适配层（Stub）
-- [x] 暴露 `/api/v1/pir/query`
-- [x] 将 Verifier 中本地 stub 执行替换为 HTTP 网络桥接
-- [x] 抽离 `call_pir_server()`，避免 `/execute` 路由继续膨胀
-- [x] 将 PIR 执行结果与票据状态推进绑定：
-  - [x] PIR 成功 -> `PENDING -> CONSUMED`
-  - [x] PIR 失败 -> `PENDING -> FAILED`
-- [x] 保持 Day 12 生命周期语义在跨服务模式下不回退
-- [x] 增加审计本地存根：
-  - [x] 在 Verifier 本地组装 `audit_record_stub`
-  - [x] 先以日志方式留痕，不立即强绑定 Auditor HTTP 投递
+## Day 16：Issuer challenge / verify_admission
+- [x] 实现 `POST /api/v1/issuer/challenge`
+- [x] 实现 `POST /api/v1/issuer/verify_admission`
+- [x] 将 admission proof 接入 `IssueRequest`
+- [x] 在 `/issue` 中强制执行 admission 前置校验
+- [x] 落地 Interactive Hashcash PoW：
+  - [x] `canonical_json_bytes()`
+  - [x] `compute_hmac()`
+  - [x] `verify_pow()`
+  - [x] `solve_pow()`
+- [x] 落地 Challenge HMAC 防伪造校验
+- [x] 落地 Challenge 过期校验
+- [x] 落地 Day 16 最小 `epoch_id` 存根校验（当前固定 `epoch_id=1`）
+- [x] 落地 Redis challenge burn semantics：
+  - [x] `admission:challenge:<fingerprint>` 独立 keyspace
+  - [x] `SET nx=True ex=ttl` 防 replay
+- [x] 补充 `client_tag` 命名收口，替换早期 `client_id` 漂移
+- [x] admission 配置收口到 YAML：
+  - [x] `difficulty_bits`
+  - [x] `challenge_ttl_sec`
+  - [x] `grace_window_sec`
+  - [x] `redis_prefix`
+- [x] 新增 Day 16 验收脚本 `scripts/test_day16_admission.py`
 
-### 下一步：Auditor / 审计闭环（第二阶段）
-- [ ] 建立 `services/auditor/main.py` HTTP 存根
-- [ ] 暴露 `/api/v1/auditor/report`
-- [ ] 将当前 `[Audit Stub]` 升级为后台 HTTP 上报
-- [ ] 明确审计记录字段与 `common.models.AuditRecord` 一致
-- [ ] 验证 Auditor 不可用时不影响 Verifier 主决策返回
+### Day 16 验收结果
+- [x] 不带 `admission_proof` 调 `/issue` 会失败（422）
+- [x] 伪造 `hmac_sig` 会被 `/verify_admission` 拒绝（403）
+- [x] 错误 `nonce` 会被 PoW 校验拒绝（403）
+- [x] 同一 challenge 二次 `/issue` 命中 replay / burned challenge（第二次 403）
 
+### Day 16 结论
+- [x] `/challenge` 已可用
+- [x] `/verify_admission` 已可用
+- [x] admission 不通过不能签票
+- [x] 不执行 challenge 拿不到票（已由反例脚本验证）
+
+### Day 16 小收尾（留给 Day 17 前顺手修）
+- [ ] 将 issuer 日志中的原始 `client_tag` 改为 hash 截断值
+- [ ] 将 Day 16 结果同步进文档 `docs/admission.md`（若尚未落盘）
 ---
 
 ## 小收口（非阻塞）

@@ -443,3 +443,90 @@ LOG_N=14 D=8 go test -v -run=BW
   1. Auditor HTTP 存根
   2. 审计字段与模型对齐
   3. 后台投递与最小审计闭环验证
+
+## 2026-04-18
+
+## Day 16：Issuer challenge / verify_admission 落地完成
+
+### 完成内容
+1. **Admission 公共密码学工具落地**
+   - 在 `common/crypto_utils.py` 中新增：
+     - `canonical_json_bytes()`
+     - `compute_hmac()`
+     - `verify_pow()`
+     - `solve_pow()`
+   - 完成 PoW 前导零 bit 校验
+   - 补充 `difficulty_bits` 与 `nonce(uint64)` 边界约束
+
+2. **Admission 对象模型落地**
+   - 在 `common/models.py` 中新增：
+     - `AdmissionPayload`
+     - `AdmissionChallenge`
+     - `AdmissionResponse`
+     - `ChallengeRequest`
+   - 将 `IssueRequest` 扩展为携带：
+     - `admission_proof`
+
+3. **Issuer Admission API 落地**
+   - 完成 `POST /api/v1/issuer/challenge`
+   - 完成 `POST /api/v1/issuer/verify_admission`
+   - 在 `/issue` 中内联 admission 校验
+   - 当前校验顺序为：
+     1. HMAC 真伪校验
+     2. challenge 过期校验
+     3. Day 16 最小 `epoch_id` 校验（当前固定 1）
+     4. PoW 校验
+     5. Redis burn / anti-replay
+     6. blind sign
+
+4. **Redis Burn Semantics 落地**
+   - 使用独立 keyspace：
+     - `admission:challenge:<challenge_fingerprint>`
+   - 使用 Redis `SET nx=True ex=ttl`
+   - 同一 challenge 仅允许成功消费一次
+   - 第二次提交命中 replay / burned challenge
+
+5. **配置收口**
+   - Admission 相关参数已从 issuer 配置读取：
+     - `difficulty_bits`
+     - `challenge_ttl_sec`
+     - `grace_window_sec`
+     - `redis_prefix`
+
+### Day 16 验收脚本
+新增：
+- `scripts/test_day16_admission.py`
+
+### 验收结果
+#### Test 1：No admission proof
+- `POST /issue` 返回 `422`
+- 结论：未提供 admission proof 无法签票
+
+#### Test 2：Forged HMAC
+- `POST /verify_admission` 返回 `403`
+- 结论：伪造 challenge 被拒绝
+
+#### Test 3：Invalid PoW Nonce
+- `POST /issue` 返回 `403`
+- 结论：PoW 校验真实生效
+
+#### Test 4：Replay / Burn Semantics
+- 第一次 `/issue` 返回 `200`
+- 第二次 `/issue` 返回 `403`
+- 结论：Redis burn semantics 生效，同一 challenge 不可复用
+
+### 关键结论
+- Day 16 目标已完成：
+  - `/challenge` 已实现
+  - `/verify_admission` 已实现
+  - admission 不通过不能签票
+  - 不执行 challenge 拿不到票（已通过反例测试验证）
+
+### 当前限制 / 备注
+- `epoch_id` 当前仍为 Day 16 stub，固定为 `1`
+- `/verify_admission` 当前主要用于 Day 16 调试与验收
+- issuer 日志中当前仍打印原始 `client_tag`，后续应收口为 hash 截断值以满足日志脱敏契约
+
+### 下一步
+- 进入 Day 17：blind ticket + admission 整合
+- 目标是在不破坏现有 Ticket / Binding / Redis 生命周期契约的前提下，将 admission 与 blind issue 串成一条完整签发链
