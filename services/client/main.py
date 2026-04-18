@@ -139,31 +139,23 @@ def acquire_ticket() -> Ticket:
 
 def create_bound_request(ticket: Ticket, query_payload: str) -> RequestInstance:
     """
-    Day 11: 将票据与载荷进行密码学绑定
+    Day 19: 将票据与载荷进行密码学绑定
     """
     logger.info("=== Starting Ticket Binding Process ===")
 
-    # 1. 还原 sigma 字节串
     sigma_bytes = base64.b64decode(ticket.sigma)
-
-    # 2. 派生 sk_t
     sk_t = derive_sk_t(sigma_bytes, ticket.sn, ticket.epoch_id)
-
-    # 3. 计算载荷承诺 c_q
     c_q_hex = compute_query_commitment(query_payload)
 
-    # 4. 构建并序列化 witness
     witness = RequestContext(
         timestamp_ms=int(time.time() * 1000),
         nonce=str(uuid.uuid4()),
-        client_state_digest="client_day11_state"
+        client_state_digest="client_day19_state"
     )
     witness_bytes = serialize_witness(witness.model_dump())
 
-    # 5. 计算 HMAC 绑定标签 b
     binding_tag = compute_binding_tag(sk_t, c_q_hex, witness_bytes)
 
-    # 6. 组装 RequestInstance
     req = RequestInstance(
         request_id=str(uuid.uuid4()),
         query_payload=query_payload,
@@ -171,6 +163,7 @@ def create_bound_request(ticket: Ticket, query_payload: str) -> RequestInstance:
         binding_tag=binding_tag,
         witness=witness
     )
+
     logger.info(f"Binding successful. Binding Tag: {binding_tag[:16]}...")
     return req
 

@@ -4,6 +4,7 @@ import hmac
 import json
 import base64
 import time
+import re
 from typing import Dict, Any, Optional
 
 
@@ -65,7 +66,24 @@ def derive_sk_t(sigma_bytes: bytes, sn_hex: str, epoch_id: int, expected_sigma_l
 
 def compute_query_commitment(query_payload: str) -> str:
     """计算载荷承诺 c_q = SHA256(q)"""
-    return hashlib.sha256(query_payload.encode('utf-8')).hexdigest()
+    if not isinstance(query_payload, str) or not query_payload:
+        raise ValueError("query_payload must be a non-empty string")
+    return hashlib.sha256(query_payload.encode("utf-8")).hexdigest()
+
+def compute_binding_tag(sk_t: bytes, c_q_hex: str, witness_bytes: bytes) -> str:
+    """计算绑定标签 b = HMAC_SHA256(sk_t, c_q || w)"""
+    if not isinstance(sk_t, bytes) or len(sk_t) == 0:
+        raise ValueError("sk_t must be non-empty bytes")
+
+    if not isinstance(c_q_hex, str) or not re.fullmatch(r"[0-9a-f]{64}", c_q_hex):
+        raise ValueError("c_q_hex must be a 64-char lowercase hex SHA256 digest")
+
+    if not isinstance(witness_bytes, bytes) or len(witness_bytes) == 0:
+        raise ValueError("witness_bytes must be non-empty bytes")
+
+    msg = c_q_hex.encode("utf-8") + witness_bytes
+    mac = hmac.new(sk_t, msg, hashlib.sha256)
+    return mac.hexdigest()
 
 
 def serialize_witness(witness_dict: Dict[str, Any]) -> bytes:

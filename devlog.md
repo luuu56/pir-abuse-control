@@ -690,3 +690,85 @@ LOG_N=14 D=8 go test -v -run=BW
 原因：
 - 主链刚完成 admission + blind ticket + epoch 收口
 - 先保证回归稳定最划算
+
+## 2026-04-18
+
+## Day 19：binding 生成完成
+
+### 完成内容
+1. **载荷承诺生成落地**
+   - 在 `common/crypto_utils.py` 中实现：
+     - `compute_query_commitment(query_payload)`
+   - 采用：
+     - `c_q = SHA256(query_payload)`
+   - 增加输入检查：
+     - `query_payload` 必须为非空字符串
+
+2. **绑定标签生成落地**
+   - 在 `common/crypto_utils.py` 中实现：
+     - `compute_binding_tag(sk_t, c_q_hex, witness_bytes)`
+   - 当前工程约定：
+     - `b = HMAC_SHA256(sk_t, c_q_hex.encode("utf-8") || witness_bytes)`
+   - 增加边界检查：
+     - `sk_t` 必须为非空 bytes
+     - `c_q_hex` 必须为 64 字符小写 hex
+     - `witness_bytes` 必须为非空 bytes
+
+3. **客户端请求实例构造收口**
+   - 在 `services/client/main.py` 中完成：
+     - `create_bound_request(ticket, query_payload)`
+   - 当前执行流程：
+     1. Base64 解码 `ticket.sigma`
+     2. 派生 `sk_t`
+     3. 计算 `c_q`
+     4. 构造 `witness`
+     5. 规范化序列化 `witness`
+     6. 计算 `binding_tag`
+     7. 组装 `RequestInstance`
+
+4. **Day 19 验收脚本**
+   - 新增：
+     - `scripts/test_day19_binding.py`
+
+### 运行结果
+执行：
+- `python scripts/test_day19_binding.py`
+
+结果：
+1. Ticket 获取成功
+   - `✅ Ticket acquired!`
+
+2. Binding 生成成功
+   - `Binding successful. Binding Tag: ...`
+
+3. RequestInstance 结构完整
+   - `request_id` 正常
+   - `ticket` 存在且 `SN` 对齐
+   - `binding_tag` 存在，长度为 64
+   - `witness.nonce` 正常
+   - `witness.timestamp_ms` 正常
+   - `query_payload` 被正确保留
+
+关键输出：
+- `🎉 [PASS] Day 19 Acceptance Criteria Met: Request instance structure is fully formed.`
+
+### 关键结论
+- Day 19 目标已完成：
+  - `c_q = H(q)` 已生成
+  - `b = HMAC(sk_t, H(q)||w)` 已生成
+  - 请求实例结构完整形成
+- Day 19 未破坏 Day 17/18 已打通的 Ticket 获取主链
+- 当前已为 Day 20 的 verifier 侧 binding 校验准备好一致的客户端生成契约
+
+### 当前限制 / 备注
+- Day 20 必须严格复用当前 binding 契约：
+  - `c_q_hex.encode("utf-8") + witness_bytes`
+- verifier 侧若有任何大小写、序列化或 witness 字段漂移，都会导致 binding 验证失败
+- issuer/client/verifier 中原始 `client_tag` 日志仍建议后续继续收口为 hash 截断值
+
+### 下一步建议
+进入 Day 20：binding verify
+重点：
+- 在 Verifier 中重算 `c_q`
+- 重算 `binding_tag`
+- 拒绝篡改 `q / b / w`

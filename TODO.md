@@ -284,6 +284,46 @@
 - [ ] 视需要补一个“上一个 epoch 但处于 grace window 内仍可通过”的正例测试
 - [ ] 将 Day 18 结果同步进相关设计文档（如 `docs/admission.md` / epoch 说明）
 ---
+## Day 19：binding 生成
+- [x] 在 `common/crypto_utils.py` 中实现 `compute_query_commitment(query_payload)`
+- [x] 在 `common/crypto_utils.py` 中实现 `compute_binding_tag(sk_t, c_q_hex, witness_bytes)`
+- [x] 为 `compute_query_commitment()` 增加最小输入检查：
+  - [x] `query_payload` 必须为非空字符串
+- [x] 为 `compute_binding_tag()` 增加边界检查：
+  - [x] `sk_t` 必须为非空 bytes
+  - [x] `c_q_hex` 必须为 64 字符小写 hex
+  - [x] `witness_bytes` 必须为非空 bytes
+- [x] 在 `services/client/main.py` 中完成 `create_bound_request(ticket, query_payload)` 收口
+- [x] `create_bound_request()` 已完成以下步骤：
+  - [x] 还原 `sigma_bytes`
+  - [x] 派生 `sk_t`
+  - [x] 计算 `c_q = H(q)`
+  - [x] 构造 `witness`
+  - [x] 规范化序列化 `witness`
+  - [x] 计算 `binding_tag`
+  - [x] 组装 `RequestInstance`
+- [x] 新增 `scripts/test_day19_binding.py`
+
+### Day 19 验收结果
+- [x] Ticket 获取成功
+- [x] `create_bound_request()` 执行成功
+- [x] `RequestInstance` 结构完整形成
+- [x] `request_id` 非空
+- [x] `ticket` 正确进入请求实例
+- [x] `binding_tag` 非空且长度为 64
+- [x] `witness` 存在且 `nonce` / `timestamp_ms` 正常
+- [x] `query_payload` 被正确保留
+
+### Day 19 结论
+- [x] `c_q = H(q)` 已生成
+- [x] `b = HMAC(sk_t, H(q)||w)` 已生成
+- [x] 请求实例结构完整形成
+- [x] Day 19 已完成
+
+### Day 19 小收尾
+- [ ] 将 verifier 侧 Day 20 binding 校验继续对齐到当前 `c_q_hex.encode("utf-8") + witness_bytes` 契约
+- [ ] 继续收口 issuer/client/verifier 中原始 `client_tag` 的日志脱敏
+- [ ] 将 Day 19 结果同步进相关设计文档（如 binding 说明）
 
 ## 当前项目状态总结
 - Issuer blind-sign 已跑通

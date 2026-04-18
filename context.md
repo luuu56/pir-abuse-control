@@ -19,7 +19,7 @@
 - Admission primitive 第一版落地
 - blind ticket 与 admission 的主链整合
 - epoch 时间窗正式接入 Ticket 主链
-- Binding 验证
+- binding 生成逻辑正式落地
 - Redis 原子防重放与票据生命周期流转
 - Verifier -> PIR Server 的第一阶段网络桥接
 - blind-sign 主链路的第一批核心单测与错误码 / API 收口
@@ -33,8 +33,9 @@
 - Client 侧 admission -> blind issue -> unblind -> local verify 整合主链
 - epoch 时间窗配置与统一 epoch 公共函数
 - Ticket 中 `epoch_id` 的动态计算与有效性校验
+- binding 所需的 `query_commitment / witness / binding_tag` 生成逻辑
+- `create_bound_request(ticket, query_payload)` 主链收口
 - Verifier RSA signature verification
-- Binding Tag 生成与校验
 - Redis 原子防重放与票据生命周期流转
 - PIR Server HTTP 适配层（Stub）
 - Verifier 跨服务调用 PIR Server
@@ -94,7 +95,16 @@
 4. Verifier 日志记录：
    - `Fast-rejecting expired ticket epoch`
 
-因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、生命周期状态机稳定、并可跨服务转发至 PIR Server”的阶段。
+当前 Day 19 binding 生成逻辑已正式接入 `RequestInstance` 构造流程，并通过结构完整性验收：
+
+1. 合法 Ticket 获取成功
+2. `create_bound_request()` 成功执行
+3. 成功生成完整 `RequestInstance`
+4. `binding_tag` 成功生成，长度为 64
+5. `witness.nonce`、`witness.timestamp_ms` 均正常
+6. `query_payload` 被正确保留
+
+因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成已接入 RequestInstance 构造流程、生命周期状态机稳定、并可跨服务转发至 PIR Server”的阶段。
 
 ---
 
@@ -170,7 +180,34 @@
 - `epoch.duration_sec`
 - `epoch.grace_window_sec`
 
-### 6. Issuer 公钥的当前约束
+### 6. Binding 第一版生成契约
+当前 binding 生成逻辑已正式落地，核心契约如下：
+
+#### 6.1 载荷承诺
+- `c_q = SHA256(query_payload)`
+- 工程函数：
+  - `compute_query_commitment(query_payload)`
+
+#### 6.2 票据派生密钥
+- `sk_t = derive_sk_t(sigma_bytes, sn, epoch_id)`
+- 当前继续沿用既有工程派生实现
+
+#### 6.3 请求上下文
+- `witness = {timestamp_ms, nonce, client_state_digest}`
+- 规范化序列化入口：
+  - `serialize_witness(witness.model_dump())`
+
+#### 6.4 绑定标签
+- `b = HMAC_SHA256(sk_t, c_q || w)`
+- 工程函数：
+  - `compute_binding_tag(sk_t, c_q_hex, witness_bytes)`
+
+说明：
+- 当前 binding 已进入 `RequestInstance` 构造路径
+- 当前阶段完成的是 **binding 生成**
+- 下一步才进入 **binding verify**
+
+### 7. Issuer 公钥的当前约束
 当前 Issuer 第一版为了简化原型：
 
 - 服务启动时在内存中动态生成 RSA key pair
@@ -196,7 +233,6 @@
 - 在最前面执行 epoch 快拒绝
 - 提取并校验 `ticket`
 - 校验 RSA 签名是否有效
-- 校验 binding 是否一致
 - 查询并推进 Redis 状态机
 - 在进入后端执行前将票据原子推进为 `PENDING`
 - 通过 HTTP 将合法请求转发至 `PIR Server`
@@ -212,6 +248,13 @@
 - epoch 失效：请求在主验证前被业务拒绝
 - 前置验证失败：请求被拒绝，但票据状态保持 `UNUSED`
 
+当前 binding 语义边界：
+
+- binding **生成** 已在 Client 侧正式接入
+- binding **验证** 尚未在 Verifier 中正式落地
+- 当前 Verifier 仍未对 `q / b / w` 一致性执行最终重算校验
+- Day 20 目标即为将 binding verify 正式接入 `/execute`
+
 当前审计语义：
 
 - Verifier 已开始在本地组装审计分录存根
@@ -226,6 +269,7 @@
 
 当前仍未完全做完：
 
+- binding verify 正式落地
 - Auditor 服务 HTTP 存根
 - Verifier -> Auditor 的后台上报
 - 审计查询接口
@@ -251,12 +295,13 @@
 - `binding_tag`
 - `witness`
 
-当前这些字段均已进入真实链路：
+当前这些字段的状态如下：
 
 - `request_id`：用于请求跟踪
+- `query_payload`：当前已进入 binding 生成
 - `ticket`：用于 blind-sign 验签、epoch 校验与生命周期状态机
-- `binding_tag`：用于 binding 一致性校验
-- `witness`：用于 binding 材料规范化与验证
+- `binding_tag`：当前已由 Client 侧生成
+- `witness`：当前已由 Client 侧生成并规范化序列化参与 binding
 
 ### Admission 相关对象
 当前 admission 第一版已引入：
@@ -283,14 +328,14 @@
 4. Verifier 可对合法 Ticket 验签通过
 5. Verifier 可拒绝篡改 `SN`
 6. Verifier 可拒绝篡改 `sigma`
-7. Binding 正反例已通过
-8. Day 12 生命周期 4 条关键分支已通过
-9. Day 13 blind-sign 全链路正反例已通过
-10. Day 14 `tests/test_crypto_core.py` 已通过（6 passed）
-11. Day 16 admission primitive 第一版反例验收已通过
-12. Day 17 blind ticket + admission 整合链路已通过
-13. Day 17+ 全链路烟雾测试已通过
-14. Day 18 epoch 时间窗过期拒绝验收已通过
+7. Day 12 生命周期 4 条关键分支已通过
+8. Day 13 blind-sign 全链路正反例已通过
+9. Day 14 `tests/test_crypto_core.py` 已通过（6 passed）
+10. Day 16 admission primitive 第一版反例验收已通过
+11. Day 17 blind ticket + admission 整合链路已通过
+12. Day 17+ 全链路烟雾测试已通过
+13. Day 18 epoch 时间窗过期拒绝验收已通过
+14. Day 19 binding 生成结构完整性验收已通过
 
 ### 已有脚本 / 测试
 - `scripts/test_ticket_flow.sh`
@@ -298,7 +343,7 @@
 - `scripts/test_day10_verifier.py`
   - 验证 Day 10 verifier 正反例链路
 - `scripts/test_day11_binding.py`
-  - 验证 binding 正反例
+  - 验证旧版 binding 联调脚本（当前应以最新主链语义重新审视）
 - `scripts/test_day12_lifecycle.py`
   - 验证生命周期状态机
 - `scripts/test_day13_blind_link.py`
@@ -314,21 +359,37 @@
 
 ## 七、当前最值得继续推进的方向
 
-### 下一阶段：端到端联调 / 回归巩固（优先）
+### 下一阶段：Day 20 binding verify
 目标：
 
-- 在主链刚刚完成 `blind ticket + admission + epoch` 收口的前提下，先巩固整体回归能力
+- 在 Verifier 中正式重算 binding 材料
+- 检查 `q / b / w` 一致性
+- 使 binding 从“已生成”推进到“已验证”
+
+需要完成：
+
+1. 在 Verifier 中重算 `c_q = SHA256(query_payload)`
+2. 重算 `sk_t = derive_sk_t(sigma_bytes, sn, epoch_id)`
+3. 重算 `binding_tag`
+4. 对 `query_payload / binding_tag / witness` 做一致性检查
+5. 验证篡改 `q / b / w` 时请求会被拒绝
+
+### 再下一阶段：端到端联调 / 回归巩固（优先）
+目标：
+
+- 在主链刚刚完成 `blind ticket + admission + epoch + binding generate` 收口的前提下，先巩固整体回归能力
 - 避免在主链尚未稳定前过早引入更复杂的审计与兼容性逻辑
 
 需要完成：
 
 1. 继续完善端到端联调 / 回归脚本
-2. 固化 Day 17+ / Day 18 主链的最小回归集合
+2. 固化 Day 17+ / Day 18 / Day 19 / Day 20 主链的最小回归集合
 3. 验证：
    - admission 缺失失败
    - challenge 重放失败
    - blind issue 正常成功
-   - binding 正常成功
+   - binding generate 正常成功
+   - binding verify 正常拒绝篡改
    - verifier 放行成功
    - PIR success / failure 分支均与状态机一致
    - epoch 过期分支被前置快拒绝
@@ -337,7 +398,7 @@
 ### 再下一阶段：Auditor / 审计闭环（第二阶段）
 目标：
 
-- 在不破坏当前已稳定的 blind-sign 主链路、admission 第一版、epoch 时间窗、生命周期状态机与 Verifier -> PIR Server 网络桥接的前提下
+- 在不破坏当前已稳定的 blind-sign 主链路、admission 第一版、epoch 时间窗、binding verify、生命周期状态机与 Verifier -> PIR Server 网络桥接的前提下
 - 为放行 / 拒绝 / 核销结果增加可接收、可查询、可追溯的最小审计落点
 
 需要完成：
@@ -372,6 +433,7 @@
 - blind-sign 已成为唯一主线，不再保留普通签名占位
 - admission 第一版采用 Interactive Hashcash PoW，不使用 VDF 代码实现
 - epoch 时间窗已正式进入 Ticket 与 Verifier 验证路径
+- binding 第一版生成逻辑已正式进入 RequestInstance 构造路径
 - PIR 后端仍保持独立进程 / 微服务集成方向
 - eBPF 仍只做轻量前置过滤
 - 当前审计仍先走最小存根，再逐步接后台投递
@@ -388,16 +450,17 @@
 - **Admission primitive 第一版**
 - **blind ticket + admission 整合**
 - **epoch 时间窗接入**
+- **binding 生成接入**
 - **Verifier ticket signature verification**
-- **Binding Tag verification**
 - **Redis 原子防重放与生命周期状态机**
 - **Verifier -> PIR Server 网络桥接（第一阶段）**
 - **blind-sign / verify 第一批核心单测**
 
-并已确认 Day 12 生命周期在跨服务模式下回归通过、Day 13 blind-sign 全链路联调完成、Day 14 第一批核心单测通过、Day 16 admission primitive 第一版反例验收通过、Day 17 blind ticket + admission 整合与 Day 17+ 全链路烟雾测试通过、Day 18 epoch 过期票据拒绝验收通过。
+并已确认 Day 12 生命周期在跨服务模式下回归通过、Day 13 blind-sign 全链路联调完成、Day 14 第一批核心单测通过、Day 16 admission primitive 第一版反例验收通过、Day 17 blind ticket + admission 整合与 Day 17+ 全链路烟雾测试通过、Day 18 epoch 过期票据拒绝验收通过、Day 19 binding 生成结构完整性验收通过。
 
 当前下一步应集中到：
 
+- **Day 20：binding verify**
 - **端到端联调 / 回归巩固**
 - **Auditor HTTP 存根与最小审计闭环**
 - **PIR 适配层协议收口与真实后端边界对接**
