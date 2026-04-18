@@ -857,3 +857,92 @@ LOG_N=14 D=8 go test -v -run=BW
 目标：
 - 所有场景被真实区分处理
 - 收口为一份周联调 / 回归脚本
+## 2026-04-18
+
+## Day 21：本周联调完成
+
+### 完成内容
+1. **RequestInstance 模型调整**
+   - 在 `common/models.py` 中将以下字段改为 Optional：
+     - `ticket`
+     - `binding_tag`
+     - `witness`
+   - 目的：
+     - 支持业务层联调与场景化拦截测试
+     - 避免所有非法输入都在 schema 层被 422 提前拦截
+   - 同时在模型注释中明确：
+     - verifier 必须显式做缺失校验
+
+2. **Verifier 精细化拒绝分支补齐**
+   - 在 `services/verifier/main.py` 中补齐以下业务拒绝语义：
+     - `Missing Ticket in request`
+     - `Ticket epoch ... has expired.`
+     - `Missing Request Witness`
+     - `Missing Binding Tag`
+     - `Binding Consistency Check Failed`
+
+3. **Day 21 联调脚本**
+   - 新增 / 收口：
+     - `scripts/test_day21_integration.py`
+   - 从配置读取 verifier 地址与 timeout
+   - 使用断言锁死业务契约，不只做打印演示
+
+### 联调场景
+本次脚本覆盖以下四类核心场景：
+
+1. **正常请求**
+   - 获取合法 ticket
+   - 生成合法 binding
+   - 发送至 verifier
+   - 预期：`SUCCESS`
+
+2. **无票据请求**
+   - `ticket = None`
+   - 预期：`REJECTED`
+   - 原因：`Missing Ticket in request`
+
+3. **过期票据**
+   - 先 `epoch_id -= 2`
+   - 再生成 binding
+   - 预期：`REJECTED`
+   - 原因：包含 `expired`
+
+4. **篡改 binding 请求**
+   - 修改 `query_payload`
+   - 保持原 `binding_tag`
+   - 预期：`REJECTED`
+   - 原因：`Binding Consistency Check Failed`
+
+### 运行结果
+执行：
+- `python scripts/test_day21_integration.py`
+
+结果：
+- `✅ 正常请求 -> SUCCESS`
+- `✅ 缺失票据 -> 真实区分 (Missing Ticket in request)`
+- `✅ 过期票据 -> 真实区分 (Ticket expired)`
+- `✅ 篡改绑定 -> 真实区分 (Binding Consistency Check Failed)`
+- `🎉 [PASS] Day 21 Weekly Integration Complete! All scenarios distinctly handled.`
+
+### 关键结论
+- Day 21 目标已完成：
+  - 正常请求
+  - 无票据请求
+  - 过期票据
+  - 篡改 binding 请求
+  均被真实区分处理
+- 这不是单点功能测试，而是本周核心防线的场景化联调
+- 当前 Day 17–21 已形成阶段性闭环
+
+### 当前限制 / 备注
+- 当前已覆盖四类本周计划中的核心场景
+- `Missing Binding Tag` 分支已实现，但 Day 21 脚本中尚未单独作为场景覆盖
+- `scripts/test_day21_integration.py` 中仍有一个未使用的 `import time`，后续可清理
+- issuer/client/verifier 中原始 `client_tag` 日志仍建议继续收口为 hash 截断值
+
+### 下一步建议
+后续可选方向：
+1. 推进 Auditor 审计闭环
+2. 或先整理更系统的周回归 / 端到端回归套件
+
+从当前状态看，主链已经通，后续重点应放在稳定性与闭环证据，而非重构主线。

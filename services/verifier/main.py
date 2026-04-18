@@ -4,7 +4,7 @@ import base64
 import requests
 import time
 import httpx
-import hmac  # 新增导入
+import hmac
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
@@ -112,9 +112,21 @@ async def call_pir_server(query_payload: str) -> tuple[bool, str]:
 
 @app.post("/api/v1/verifier/execute", response_model=PIRResponse)
 async def execute_query(req: RequestInstance):
-    logger.info(f"Received request {req.request_id} for SN: {req.ticket.sn[:16]}...")
+    # 修正日志打印：此时不能保证 ticket 存在，避免抛出 AttributeError
+    logger.info(f"Received request {req.request_id}...")
 
-    # --- 0. 纪元时间窗检查 (Day 18: 前置快拒绝) ---
+    # --- 0a. 缺失票据拦截 (Day 21 新增) ---
+    if req.ticket is None:
+        logger.warning(f"Request {req.request_id} REJECTED: Missing Ticket")
+        return PIRResponse(
+            request_id=req.request_id, decision=Decision.REJECTED,
+            ticket_state=TicketState.UNUSED, reason="Missing Ticket in request"
+        )
+
+    # 确认有票据后，补充打印 SN 信息
+    logger.info(f"Processing request {req.request_id} for SN: {req.ticket.sn[:16]}...")
+
+    # --- 0b. 纪元时间窗检查 (Day 18: 前置快拒绝) ---
     if not is_epoch_valid(req.ticket.epoch_id, int(time.time()), EPOCH_DURATION, GRACE_WINDOW):
         logger.warning(f"Fast-rejecting expired ticket epoch: {req.ticket.epoch_id}")
         return PIRResponse(
@@ -157,6 +169,10 @@ async def execute_query(req: RequestInstance):
     if req.witness is None:
         return PIRResponse(request_id=req.request_id, decision=Decision.REJECTED, ticket_state=TicketState.UNUSED,
                            reason="Missing Request Witness")
+
+    if req.binding_tag is None:
+        return PIRResponse(request_id=req.request_id, decision=Decision.REJECTED, ticket_state=TicketState.UNUSED,
+                           reason="Missing Binding Tag")
 
     # 优化可读性：将 expected_c_q 提至外部，避免后续 Audit Stub 引用悬空
     expected_c_q = compute_query_commitment(req.query_payload)

@@ -34,9 +34,10 @@ class RequestInstance(BaseModel):
     """请求实例 r = (q, t, b, w)"""
     request_id: str = Field(..., description="Global unique tracking ID (UUID/ULID)")
     query_payload: str = Field(..., description="PIR Query Payload (Encoded string/Base64)")
-    ticket: Ticket = Field(..., description="Ticket (t)")
-    binding_tag: str = Field(..., description="Binding Tag b = HMAC(sk_t, H(q)||w) (Hex string)")
-    witness: RequestContext = Field(..., description="Context w")
+    # Day 21 起为了支持业务层联调与场景化拦截测试，ticket / binding_tag / witness 允许为空；verifier 必须显式做缺失校验。
+    ticket: Optional[Ticket] = None
+    binding_tag: Optional[str] = None
+    witness: Optional[RequestContext] = None
 
 # --- 审计与响应模型 ---
 
@@ -87,8 +88,6 @@ class ChallengeRequest(BaseModel):
 class IssueRequest(BaseModel):
     blinded_message: str = Field(..., description="Blinded message (Hex string)")
     admission_proof: AdmissionResponse  # 替换原来的 dummy_proof 占位符
-
-# common/models.py 底部补充
 
 class IssueResponse(BaseModel):
     blinded_signature: str = Field(..., description="Blind signature s' (Hex string, zero-padded, no '0x')")

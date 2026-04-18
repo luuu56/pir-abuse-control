@@ -365,7 +365,50 @@
 - [ ] 将测试脚本中的失败分支进一步补充 `resp.text` 输出，便于未来排障
 - [ ] 继续收口 issuer/client/verifier 中原始 `client_tag` 的日志脱敏
 - [ ] 将 Day 20 结果同步进 binding / verifier 相关设计文档
+## Day 21：本周联调
+- [x] 调整 `RequestInstance` 模型以支持业务层联调场景：
+  - [x] `ticket: Optional[Ticket] = None`
+  - [x] `binding_tag: Optional[str] = None`
+  - [x] `witness: Optional[RequestContext] = None`
+- [x] 在模型注释中明确：
+  - [x] Day 21 起为了支持业务层联调与场景化拦截测试，`ticket / binding_tag / witness` 允许为空
+  - [x] verifier 必须显式做缺失校验
 
+- [x] 在 `services/verifier/main.py` 中补齐精细化拒绝分支：
+  - [x] 缺失票据 -> `Missing Ticket in request`
+  - [x] 过期票据 -> `Ticket epoch ... has expired.`
+  - [x] 缺失 witness -> `Missing Request Witness`
+  - [x] 缺失 binding_tag -> `Missing Binding Tag`
+  - [x] 篡改 binding -> `Binding Consistency Check Failed`
+
+- [x] 新增 `scripts/test_day21_integration.py`
+- [x] 脚本从配置读取：
+  - [x] `VERIFIER_URL`
+  - [x] `TIMEOUT`
+- [x] 联调脚本增加断言，锁死业务契约，不只做打印
+
+### Day 21 联调场景
+- [x] Case 1：正常请求
+- [x] Case 2：无票据请求
+- [x] Case 3：过期票据
+- [x] Case 4：篡改 binding 请求
+
+### Day 21 验收结果
+- [x] 正常请求 -> `SUCCESS`
+- [x] 无票据请求 -> `REJECTED` + `Missing Ticket in request`
+- [x] 过期票据 -> `REJECTED` + `expired`
+- [x] 篡改 binding 请求 -> `REJECTED` + `Binding Consistency Check Failed`
+- [x] 所有场景都被真实区分处理
+
+### Day 21 结论
+- [x] 本周联调已完成
+- [x] Day 17–21 主线形成阶段性闭环
+- [x] 当前已具备进入下一阶段（如审计闭环或更系统的回归脚本整理）的基础
+
+### Day 21 小收尾
+- [ ] 删除 `scripts/test_day21_integration.py` 中未使用的 `import time`
+- [ ] 继续收口 issuer/client/verifier 中原始 `client_tag` 的日志脱敏
+- [ ] 将 Day 21 联调结果同步进周总结 / 回归文档
 ## 当前项目状态总结
 - Issuer blind-sign 已跑通
 - Client ticket acquisition 已跑通
@@ -378,3 +421,4 @@
 - Day 14 第一批 blind-sign / verify 核心单测已通过（6 passed）
 - 当前审计仍为本地日志存根
 - 下一阶段重点：Auditor HTTP 存根 + 审计闭环
+- 

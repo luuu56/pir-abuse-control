@@ -21,6 +21,7 @@
 - epoch 时间窗正式接入 Ticket 主链
 - binding 生成逻辑正式落地
 - verifier 侧 binding verify 正式落地
+- 本周联调完成（四类核心场景已真实区分）
 - Redis 原子防重放与票据生命周期流转
 - Verifier -> PIR Server 的第一阶段网络桥接
 - blind-sign 主链路的第一批核心单测与错误码 / API 收口
@@ -38,6 +39,7 @@
 - `create_bound_request(ticket, query_payload)` 主链收口
 - Verifier RSA signature verification
 - Verifier binding consistency check
+- Verifier 对缺失 ticket / 缺失 witness / 缺失 binding_tag / 过期 epoch / binding 篡改的业务拒绝语义
 - Redis 原子防重放与票据生命周期流转
 - PIR Server HTTP 适配层（Stub）
 - Verifier 跨服务调用 PIR Server
@@ -115,7 +117,14 @@
 5. 移除 `witness` -> 被拒绝
 6. 原始合法请求 -> `decision = SUCCESS`
 
-因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、生命周期状态机稳定、并可跨服务转发至 PIR Server”的阶段。
+当前 Day 21 本周联调已完成，并证明系统能够真实区分四类核心场景：
+
+1. 正常请求（Happy Path）
+2. 无票据请求（Missing Ticket）
+3. 过期票据（Expired Ticket）
+4. 篡改 binding 请求（Binding Consistency Failure）
+
+因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、主链核心场景已完成本周联调区分验证、并可跨服务转发至 PIR Server”的阶段。
 
 ---
 
@@ -227,6 +236,7 @@
 当前拒绝语义包括：
 
 - `Missing Request Witness`
+- `Missing Binding Tag`
 - `Binding Consistency Check Failed`
 - `Invalid Binding Material`
 
@@ -254,6 +264,7 @@
 
 - 接收 `RequestInstance`
 - 在最前面执行 epoch 快拒绝
+- 显式检查 ticket / witness / binding_tag 是否缺失
 - 提取并校验 `ticket`
 - 校验 RSA 签名是否有效
 - 校验 binding consistency
@@ -266,14 +277,16 @@
 
 当前拒绝语义已明确：
 
+- `Missing Ticket in request`：请求缺失 ticket 时业务拒绝
 - `PENDING`：表示 in-flight / 并发 replay
 - `CONSUMED`：表示 double spend / replay after success
 - `FAILED`：表示 burned ticket / replay after execution failure
-- epoch 失效：请求在主验证前被业务拒绝
+- `Ticket epoch ... has expired`：epoch 失效时业务拒绝
 - `Missing Request Witness`：缺失 witness 时拒绝
+- `Missing Binding Tag`：缺失 binding_tag 时拒绝
 - `Binding Consistency Check Failed`：`q / b / w` 任一被篡改时拒绝
 - `Invalid Binding Material`：binding 材料异常时业务拒绝
-- 前置验证失败：请求被拒绝，但票据状态保持 `UNUSED`
+- 其他前置验证失败：请求被拒绝，但票据状态保持 `UNUSED`
 
 当前审计语义：
 
@@ -306,21 +319,27 @@
 ### RequestInstance
 - `r = (q, t, b, w)`
 
-当前 `RequestInstance` 已具备字段骨架：
+当前 `RequestInstance` 为支持 Day 21 业务层联调与场景化拦截测试，字段已调整为：
 
 - `request_id`
 - `query_payload`
-- `ticket`
-- `binding_tag`
-- `witness`
+- `ticket: Optional[Ticket] = None`
+- `binding_tag: Optional[str] = None`
+- `witness: Optional[RequestContext] = None`
 
 当前这些字段的状态如下：
 
 - `request_id`：用于请求跟踪
 - `query_payload`：当前已进入 binding 生成与 verifier 侧重算校验
-- `ticket`：用于 blind-sign 验签、epoch 校验与生命周期状态机
-- `binding_tag`：当前已由 Client 侧生成，并由 Verifier 侧校验
-- `witness`：当前已由 Client 侧生成，并由 Verifier 侧参与一致性校验
+- `ticket`：允许为空以支持无票据业务场景联调；Verifier 必须显式检查
+- `binding_tag`：允许为空以支持业务层场景化测试；Verifier 必须显式检查
+- `witness`：允许为空以支持业务层场景化测试；Verifier 必须显式检查
+
+说明：
+
+- 这些字段允许为空是为了支持 Day 21 业务层联调
+- 不能依赖 Pydantic 422 代替业务拒绝
+- 业务语义必须由 verifier 显式区分处理
 
 ### Admission 相关对象
 当前 admission 第一版已引入：
@@ -356,6 +375,7 @@
 13. Day 18 epoch 时间窗过期拒绝验收已通过
 14. Day 19 binding 生成结构完整性验收已通过
 15. Day 20 verifier 侧 binding verify 全分支验收已通过
+16. Day 21 本周联调已完成，四类核心场景均能被真实区分处理
 
 ### 已有脚本 / 测试
 - `scripts/test_ticket_flow.sh`
@@ -379,48 +399,27 @@
 
 ## 七、当前最值得继续推进的方向
 
-### 下一阶段：Day 21 本周联调
-建议场景：
+### 下一阶段：端到端回归脚本 / 周回归套件
+目标：
+
+- 在 Day 21 已完成本周联调的基础上，将核心场景沉淀为可重复执行的周联调脚本 / 回归脚本
+- 避免后续在 Auditor、协议收口等阶段把当前主链路打坏
+
+建议覆盖场景：
 
 1. 正常请求
 2. 无票据请求
 3. 过期票据
 4. 篡改 binding 请求
 
-目标：
-
-- 所有场景都被真实区分处理
-- 形成一份本周联调脚本 / 回归脚本
-
 需要完成：
 
 1. 整理覆盖正常请求与异常请求的最小联调矩阵
-2. 验证无票据请求是否被正确拒绝
+2. 验证无票据请求是否被正确业务拒绝
 3. 验证过期票据是否在 verifier 前置快拒绝
 4. 验证篡改 `q / b / w` 请求是否命中 binding consistency reject
 5. 验证正常请求仍可成功进入 PIR Server 并返回 `SUCCESS`
 6. 将以上场景沉淀为一份周联调脚本 / 回归脚本
-
-### 再下一阶段：端到端联调 / 回归巩固（优先）
-目标：
-
-- 在主链刚刚完成 `blind ticket + admission + epoch + binding generate + binding verify` 收口的前提下，先巩固整体回归能力
-- 避免在主链尚未稳定前过早引入更复杂的审计与兼容性逻辑
-
-需要完成：
-
-1. 继续完善端到端联调 / 回归脚本
-2. 固化 Day 17+ / Day 18 / Day 19 / Day 20 / Day 21 主链的最小回归集合
-3. 验证：
-   - admission 缺失失败
-   - challenge 重放失败
-   - blind issue 正常成功
-   - binding generate 正常成功
-   - binding verify 正常拒绝篡改
-   - verifier 放行成功
-   - PIR success / failure 分支均与状态机一致
-   - epoch 过期分支被前置快拒绝
-4. 保证主链刚打通时不被后续高级功能回归打坏
 
 ### 再下一阶段：Auditor / 审计闭环（第二阶段）
 目标：
@@ -484,12 +483,12 @@
 - **Redis 原子防重放与生命周期状态机**
 - **Verifier -> PIR Server 网络桥接（第一阶段）**
 - **blind-sign / verify 第一批核心单测**
+- **Day 21 本周联调**
 
-并已确认 Day 12 生命周期在跨服务模式下回归通过、Day 13 blind-sign 全链路联调完成、Day 14 第一批核心单测通过、Day 16 admission primitive 第一版反例验收通过、Day 17 blind ticket + admission 整合与 Day 17+ 全链路烟雾测试通过、Day 18 epoch 过期票据拒绝验收通过、Day 19 binding 生成结构完整性验收通过、Day 20 verifier 侧 binding verify 全分支验收通过。
+并已确认 Day 12 生命周期在跨服务模式下回归通过、Day 13 blind-sign 全链路联调完成、Day 14 第一批核心单测通过、Day 16 admission primitive 第一版反例验收通过、Day 17 blind ticket + admission 整合与 Day 17+ 全链路烟雾测试通过、Day 18 epoch 过期票据拒绝验收通过、Day 19 binding 生成结构完整性验收通过、Day 20 verifier 侧 binding verify 全分支验收通过、Day 21 本周联调完成并真实区分 happy path、缺失票据、过期票据与篡改 binding 四类核心场景。
 
 当前下一步应集中到：
 
-- **Day 21：本周联调**
-- **端到端联调 / 回归巩固**
+- **端到端回归脚本 / 周回归套件**
 - **Auditor HTTP 存根与最小审计闭环**
 - **PIR 适配层协议收口与真实后端边界对接**
