@@ -946,3 +946,109 @@ LOG_N=14 D=8 go test -v -run=BW
 2. 或先整理更系统的周回归 / 端到端回归套件
 
 从当前状态看，主链已经通，后续重点应放在稳定性与闭环证据，而非重构主线。
+
+## 2026-04-18
+
+## Day 22：Redis 状态表与状态查询接口收口完成
+
+### 完成内容
+1. **Redis 状态表管理器收口**
+   - 在 `services/verifier/state_manager.py` 中完善 `TicketStateManager`
+   - 状态仍保持：
+     - `UNUSED`
+     - `PENDING`
+     - `CONSUMED`
+     - `FAILED`
+
+2. **`UNUSED` 语义正式收口**
+   - 明确：
+     - `Redis miss == UNUSED`
+   - 不要求 Issuer 在签发时预写 Redis
+   - 避免将状态表错误耦合进 blind ticket 签发链
+
+3. **统一配置接入**
+   - Redis 连接参数改为优先从统一 YAML 读取：
+     - `host`
+     - `port`
+     - `db`
+   - Redis key 前缀改为从配置读取：
+     - `ticket_state_prefix`
+
+4. **Epoch 关联 TTL 落地**
+   - 终态 `CONSUMED / FAILED` 的 Redis TTL 不再使用固定保留时长占位
+   - 改为按 `epoch_id` 推导：
+     - 票据所属 epoch 结束时间
+     - `+ grace_window`
+     - `+ 600s retention buffer`
+   - `ttl_override_sec` 仅供测试 / 联调使用
+
+5. **懒初始化改造**
+   - 将 `state_manager` 从 import-time 单例改为懒初始化
+   - 避免脚本 / 模块 import 时立刻强依赖 Redis
+
+6. **Verifier 状态查询接口**
+   - 新增：
+     - `GET /api/v1/verifier/ticket_state/{sn}`
+   - 增加严格 `64-char hex` SN 校验
+   - 合法 SN 返回状态
+   - 非法 SN 返回 `400`
+
+7. **Day 22 验收脚本**
+   - 收口 `scripts/test_day22_redis_state.py`
+   - 覆盖：
+     - Redis miss 默认 `UNUSED`
+     - `PENDING` 原子占位
+     - `CONSUMED` 终态写入
+     - Epoch 驱动 TTL
+     - TTL 过期后逻辑状态回归 `UNUSED`
+
+### 运行结果
+
+#### 1. Day 22 Redis 状态表核心语义脚本
+执行：
+- `python scripts/test_day22_redis_state.py`
+
+结果：
+- Redis miss -> `UNUSED`
+- `PENDING` 原子占位成功
+- 终态写入成功
+- Redis 实际 TTL 可按 Epoch 规则推导
+- TTL 过期后 Redis key 被物理清理
+- 再次查询逻辑状态回归 `UNUSED`
+
+关键输出：
+- `✅ 验收点 1 通过: Redis Miss == UNUSED`
+- `✅ 验收点 2 通过: PENDING 原子占位成功`
+- `✅ 验收点 3 通过: 成功流转终态，且真实 TTL 严格符合 Epoch 时间窗预期`
+- `✅ 验收点 4 通过: TTL 过期后发生 Redis Miss，逻辑状态优雅回归 UNUSED`
+
+#### 2. Verifier 状态查询接口
+执行：
+- `curl -s http://127.0.0.1:8002/api/v1/verifier/ticket_state/<SN>`
+- `curl -s http://127.0.0.1:8002/api/v1/verifier/ticket_state/<invalid_sn>`
+
+结果：
+- 合法 64-char hex `SN` 返回：
+  - `{"sn":"...","ticket_state":"UNUSED"}`
+- 非法 `SN` 返回：
+  - `{"detail":"Invalid SN format: must be 64-char hex"}`
+
+### 关键结论
+- Day 22 的 Redis 状态表核心语义已落地
+- Day 22 的“verifier 可查询状态”验收已通过
+- 当前实现保持了与既有 blind ticket 主链的一致性：
+  - 不要求 Issuer 预写 `UNUSED`
+  - 状态查询与终态 TTL 均留在 verifier / Redis 侧完成
+
+### 当前限制 / 备注
+- 当前 Redis value 第一版仍只存状态字符串
+- 若后续 Auditor 对账需要更强状态可解释性，再考虑升级为结构化 JSON
+- 当前 `try_lock()` 已存在，但 Day 23 仍需正式将其收口为原子防并发验收主体
+- Verifier 启动时若 Issuer 未开启，仍会在启动日志中出现公钥抓取失败提示；这不影响 Day 22 的只读状态查询接口，但会影响 `/execute` 主链验签路径
+
+### 下一步建议
+- 进入 Day 23：原子核销正式收口
+- 重点：
+  1. 明确 `UNUSED -> PENDING` 的原子状态转换语义
+  2. 验证并发 replay 仅允许一次成功
+  3. 将短锁 TTL 视需要收口到 YAML 配置

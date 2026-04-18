@@ -22,9 +22,10 @@
 - binding 生成逻辑正式落地
 - verifier 侧 binding verify 正式落地
 - 本周联调完成（四类核心场景已真实区分）
-- Redis 原子防重放与票据生命周期流转
+- Redis 原子防重放与票据生命周期流转（已有第一版实现）
 - Verifier -> PIR Server 的第一阶段网络桥接
 - blind-sign 主链路的第一批核心单测与错误码 / API 收口
+- Day 22：Redis 状态表与状态查询接口收口
 
 当前已完成：
 
@@ -45,6 +46,8 @@
 - Verifier 跨服务调用 PIR Server
 - 审计本地日志存根
 - blind-sign / verify 第一批核心单测
+- Day 22 Redis 状态表管理器
+- `GET /api/v1/verifier/ticket_state/{sn}` 状态查询接口
 
 当前 Day 12 生命周期在跨服务模式下已再次通过 4 条关键验收：
 
@@ -124,7 +127,24 @@
 3. 过期票据（Expired Ticket）
 4. 篡改 binding 请求（Binding Consistency Failure）
 
-因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、主链核心场景已完成本周联调区分验证、并可跨服务转发至 PIR Server”的阶段。
+当前 Day 22 已完成 Redis 状态表核心语义与状态查询接口收口：
+
+1. `Redis miss == UNUSED` 已明确为逻辑默认态
+2. 不要求 Issuer 在签发时物理预写 `UNUSED` 状态，避免与签发链耦合
+3. `TicketStateManager` 已接入统一 YAML 配置
+4. Redis key 已支持统一前缀
+5. 终态 `CONSUMED / FAILED` 已支持基于 `epoch_id` 的 TTL 推导
+6. `ttl_override_sec` 仅保留给测试/联调用
+7. Verifier 已提供：
+   - `GET /api/v1/verifier/ticket_state/{sn}`
+8. 验收结果：
+   - Redis miss 默认返回 `UNUSED`
+   - `PENDING` 原子占位成功
+   - `CONSUMED` 终态写入成功
+   - TTL 过期后 Redis key 被物理清理，逻辑状态回归 `UNUSED`
+   - 非法 SN 查询返回 `400 Bad Request`
+
+因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、主链核心场景已完成本周联调区分验证、Redis 状态表已完成 Day 22 收口、并可跨服务转发至 PIR Server”的阶段。
 
 ---
 
@@ -254,6 +274,39 @@
 
 这只是当前原型阶段策略，后续若进入稳定阶段需要考虑持久化或固定 key 管理。
 
+### 8. Redis 状态表第一版契约（Day 22）
+当前 Day 22 的 Redis 状态表契约为：
+
+- Redis 以 `SN` 为核心管理票据状态
+- 当前 key 形态为：
+  - `"{ticket_state_prefix}:{sn}"`
+- 当前 Redis value 第一版仅保存：
+  - `PENDING`
+  - `CONSUMED`
+  - `FAILED`
+- `UNUSED` 不强制物理存储，作为逻辑默认态存在：
+  - Redis miss == `UNUSED`
+
+当前状态查询入口：
+
+- `services.verifier.state_manager.get_state(sn)`
+- `GET /api/v1/verifier/ticket_state/{sn}`
+
+当前终态 TTL 契约：
+
+- 正式主流程优先传入 `epoch_id`
+- TTL 基于以下规则推导：
+  - 票据所属 epoch 结束时间
+  - `+ grace_window_sec`
+  - `+ retention buffer (当前为 600 秒)`
+- `ttl_override_sec` 仅用于测试 / 联调
+
+当前原子占位契约：
+
+- `try_lock(sn, lock_ttl_sec=...)`
+- 使用 `nx=True` 将状态推进到 `PENDING`
+- 该能力目前已提前存在，但语义上仍归属于 Day 23 原子防并发的正式收口范围
+
 ---
 
 ## 四、当前 Verifier 的真实语义边界
@@ -275,6 +328,13 @@
   - `CONSUMED`
   - `FAILED`
 
+当前额外已具备：
+
+- `GET /api/v1/verifier/ticket_state/{sn}`：
+  - 用于只读查询当前票据逻辑状态
+  - 要求 `sn` 为 64-char hex
+  - Redis miss 返回 `UNUSED`
+
 当前拒绝语义已明确：
 
 - `Missing Ticket in request`：请求缺失 ticket 时业务拒绝
@@ -292,7 +352,7 @@
 
 - Verifier 已开始在本地组装审计分录存根
 - 当前仅以日志形式留痕
-- Auditor HTTP 投递尚未接入主链路
+- Auditor HTTP 投递尚未接入主链路作为正式完成项
 
 当前 blind-sign 语义：
 
@@ -302,9 +362,9 @@
 
 当前仍未完全做完：
 
-- Auditor 服务 HTTP 存根
-- Verifier -> Auditor 的后台上报
-- 审计查询接口
+- Auditor 服务 HTTP 存根正式并入主链
+- Verifier -> Auditor 的后台上报正式验收
+- 审计查询接口正式验收
 - 真实 Go SimplePIR 进程 / 微服务集成（当前仍为 Python stub adapter）
 
 ---
@@ -355,6 +415,20 @@
 - blind issue 已不再只接收 `blinded_message`
 - `admission_proof` 已进入 `/issue` 的前置校验路径
 
+### TicketState
+当前 Day 22 已使用统一状态枚举：
+
+- `UNUSED`
+- `PENDING`
+- `CONSUMED`
+- `FAILED`
+
+说明：
+
+- `UNUSED` 为逻辑默认态
+- Redis 不要求预写物理 `UNUSED`
+- 对外查询与内部状态机语义统一使用同一枚举
+
 ---
 
 ## 六、当前测试与验收状态
@@ -376,6 +450,15 @@
 14. Day 19 binding 生成结构完整性验收已通过
 15. Day 20 verifier 侧 binding verify 全分支验收已通过
 16. Day 21 本周联调已完成，四类核心场景均能被真实区分处理
+17. Day 22 Redis 状态表核心语义已通过：
+   - Redis miss == `UNUSED`
+   - `PENDING` 原子占位成功
+   - 终态可写入
+   - Epoch 关联 TTL 生效
+   - TTL 过期后逻辑状态回归 `UNUSED`
+18. Day 22 verifier 状态查询接口已通过：
+   - 合法 64-char hex `SN` 返回 200 + `ticket_state`
+   - 非法 `SN` 返回 400
 
 ### 已有脚本 / 测试
 - `scripts/test_ticket_flow.sh`
@@ -394,34 +477,42 @@
   - 验证 `Client -> Admission -> Issuer -> Binding -> Verifier -> PIR Server` 主线烟雾测试
 - `tests/test_crypto_core.py`
   - blind-sign / verify 核心单测
+- `scripts/test_day22_redis_state.py`
+  - 验证 Day 22 Redis 状态表核心语义与 Epoch TTL
 
 ---
 
 ## 七、当前最值得继续推进的方向
 
-### 下一阶段：端到端回归脚本 / 周回归套件
+### 下一阶段：Day 23 原子核销正式收口
 目标：
 
-- 在 Day 21 已完成本周联调的基础上，将核心场景沉淀为可重复执行的周联调脚本 / 回归脚本
-- 避免后续在 Auditor、协议收口等阶段把当前主链路打坏
-
-建议覆盖场景：
-
-1. 正常请求
-2. 无票据请求
-3. 过期票据
-4. 篡改 binding 请求
+- 在当前 Day 22 已完成状态表与状态查询的基础上
+- 正式将 `UNUSED -> PENDING` 原子状态转换收口为 Day 23 验收主体
+- 锁死并发 replay 时只允许一个请求成功进入处理态
 
 需要完成：
 
-1. 整理覆盖正常请求与异常请求的最小联调矩阵
-2. 验证无票据请求是否被正确业务拒绝
-3. 验证过期票据是否在 verifier 前置快拒绝
-4. 验证篡改 `q / b / w` 请求是否命中 binding consistency reject
-5. 验证正常请求仍可成功进入 PIR Server 并返回 `SUCCESS`
-6. 将以上场景沉淀为一份周联调脚本 / 回归脚本
+1. 明确 `try_lock()` 的 Day 23 正式语义
+2. 将短锁 TTL 视需要收口到 YAML 配置
+3. 用并发测试验证相同 `SN` 只允许一次占位成功
+4. 将该原子占位与 verifier 主路径进一步对齐
 
-### 再下一阶段：Auditor / 审计闭环（第二阶段）
+### 再下一阶段：Day 24 判定路径绑定原子核销
+目标：
+
+- 只有验证通过并成功将状态推进到 `PENDING` 时，请求才允许进入 PIR 主路径
+- PIR 成功后推进 `CONSUMED`
+- PIR 失败后推进 `FAILED`
+- 前置验证失败不改变状态
+
+需要完成：
+
+1. 将当前状态表语义与 verifier 主路径进一步收口
+2. 验证正常 / 失败 / replay / 前置拒绝场景与票据状态严格一致
+3. 保持当前 Redis miss == `UNUSED` 语义不回退
+
+### 再下一阶段：Auditor / 审计闭环（后续）
 目标：
 
 - 在不破坏当前已稳定的 blind-sign 主链路、admission 第一版、epoch 时间窗、binding verify、生命周期状态机与 Verifier -> PIR Server 网络桥接的前提下
@@ -465,6 +556,7 @@
 - eBPF 仍只做轻量前置过滤
 - 当前审计仍先走最小存根，再逐步接后台投递
 - 项目继续优先“小修收口”，避免中途大重构
+- Day 22 当前保持 `UNUSED` 为逻辑默认态，而非签发即预写 Redis
 
 ---
 
@@ -484,11 +576,17 @@
 - **Verifier -> PIR Server 网络桥接（第一阶段）**
 - **blind-sign / verify 第一批核心单测**
 - **Day 21 本周联调**
+- **Day 22 Redis 状态表与状态查询接口收口**
 
-并已确认 Day 12 生命周期在跨服务模式下回归通过、Day 13 blind-sign 全链路联调完成、Day 14 第一批核心单测通过、Day 16 admission primitive 第一版反例验收通过、Day 17 blind ticket + admission 整合与 Day 17+ 全链路烟雾测试通过、Day 18 epoch 过期票据拒绝验收通过、Day 19 binding 生成结构完整性验收通过、Day 20 verifier 侧 binding verify 全分支验收通过、Day 21 本周联调完成并真实区分 happy path、缺失票据、过期票据与篡改 binding 四类核心场景。
+并已确认：
 
-当前下一步应集中到：
-
-- **端到端回归脚本 / 周回归套件**
-- **Auditor HTTP 存根与最小审计闭环**
-- **PIR 适配层协议收口与真实后端边界对接**
+- Day 12 生命周期在跨服务模式下回归通过
+- Day 13 blind-sign 全链路联调完成
+- Day 14 第一批核心单测通过
+- Day 16 admission primitive 第一版反例验收通过
+- Day 17 blind ticket + admission 整合通过
+- Day 18 epoch 时间窗过期拒绝通过
+- Day 19 binding 生成通过
+- Day 20 binding verify 通过
+- Day 21 本周联调四类场景通过
+- Day 22 Redis 状态表核心语义与 verifier 状态查询接口通过

@@ -409,6 +409,50 @@
 - [ ] 删除 `scripts/test_day21_integration.py` 中未使用的 `import time`
 - [ ] 继续收口 issuer/client/verifier 中原始 `client_tag` 的日志脱敏
 - [ ] 将 Day 21 联调结果同步进周总结 / 回归文档
+### Day 22：Redis 状态表接入
+- [x] 在 `services/verifier/state_manager.py` 中落地 Redis 状态表管理器
+- [x] 明确 `UNUSED` 为逻辑默认态：
+  - [x] Redis miss == `UNUSED`
+  - [x] 不要求签发时由 Issuer 预写 Redis，避免与签发链耦合
+- [x] 接入统一 YAML 配置读取：
+  - [x] Redis `host / port / db`
+  - [x] `ticket_state_prefix`
+  - [x] Epoch `duration_sec / grace_window_sec`
+- [x] 实现状态查询：
+  - [x] `get_state(sn)` 返回 `UNUSED / PENDING / CONSUMED / FAILED`
+- [x] 实现短时占位能力（作为 Day 23 提前实现的最小原子能力）：
+  - [x] `try_lock(sn)` 使用 `nx=True` 将票据置为 `PENDING`
+- [x] 实现终态写入：
+  - [x] `mark_consumed(sn, epoch_id, ...)`
+  - [x] `mark_failed(sn, epoch_id, ...)`
+- [x] 实现 Epoch 关联 TTL：
+  - [x] 终态记录 TTL 由 `epoch_id + grace_window + retention buffer` 推导
+  - [x] 支持 `ttl_override_sec` 仅供测试/联调使用
+- [x] 将 `state_manager` 改为懒初始化，避免 import 时即强依赖 Redis
+- [x] 在 Verifier 中新增状态查询接口：
+  - [x] `GET /api/v1/verifier/ticket_state/{sn}`
+  - [x] 增加严格 `64-char hex` SN 校验
+- [x] 新增 / 收口验收脚本：
+  - [x] `scripts/test_day22_redis_state.py`
+
+### Day 22 验收结果
+- [x] Redis miss 时，状态逻辑默认返回 `UNUSED`
+- [x] `PENDING` 原子占位成功
+- [x] `CONSUMED` 终态写入成功
+- [x] Redis 终态 TTL 可按 Epoch 规则推导
+- [x] TTL 过期后，Redis key 被物理清理，逻辑状态回归 `UNUSED`
+- [x] `GET /api/v1/verifier/ticket_state/{sn}` 可正常返回票据状态
+- [x] 非法 SN 查询返回 `400 Bad Request`
+
+### Day 22 结论
+- [x] Day 22 的 Redis 状态表核心语义已落地
+- [x] Day 22 的“verifier 可查询状态”验收已通过
+- [x] 当前实现保持与既有主线一致，不引入对 Issuer 签发链的新耦合
+
+### Day 22 小收尾
+- [ ] 视需要将 `PENDING` 短锁 TTL 收口到 YAML 配置
+- [ ] 视后续 Auditor 对账需求，再决定是否将 Redis value 从纯状态字符串升级为结构化 JSON
+- [ ] 在 Day 23/24 中继续把 `try_lock()` 与主验证路径原子消费语义正式收口
 ## 当前项目状态总结
 - Issuer blind-sign 已跑通
 - Client ticket acquisition 已跑通
