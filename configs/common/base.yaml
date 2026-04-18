@@ -1,3 +1,30 @@
 app_name: pir-abuse-control
 log_level: INFO
 log_dir: logs
+
+issuer:
+  host: 127.0.0.1
+  port: 8001
+
+verifier:
+  host: 127.0.0.1
+  port: 8002
+
+pir_server:
+  host: 127.0.0.1
+  port: 8003
+  stub_latency_sec: 1.0
+
+redis:
+  host: 127.0.0.1
+  port: 6379
+  db: 0
+
+client:
+  client_id: client_test_01
+  timeout: 5
+
+# configs/common/base.yaml 新增
+epoch:
+  duration_sec: 3600  # 默认 1 小时一个纪元
+  grace_window_sec: 300 # 允许 5 分钟的跨纪元宽限期（可选，用于处理时钟漂移）

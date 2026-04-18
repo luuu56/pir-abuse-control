@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import json
 import base64
+import time
 from typing import Dict, Any, Optional
 
 
@@ -146,3 +147,38 @@ def solve_pow(payload_bytes: bytes, hmac_sig_hex: str, difficulty_bits: int) -> 
             return nonce
 
     raise RuntimeError("Failed to solve PoW within uint64 space")
+
+
+# --- Day 18: Epoch 时间窗实现 ---
+
+def get_current_epoch_id(epoch_duration: int) -> int:
+    """根据当前时间戳和设定的持续时间计算 Epoch ID"""
+    return int(time.time() // epoch_duration)
+
+
+def is_epoch_valid(ticket_epoch: int, now_ts: int, duration: int, grace: int) -> bool:
+    """
+    【统一时间契约】判定给定的 Epoch ID 是否仍处于有效期内。
+    规则：
+    1. 等于当前 Epoch：永远有效。
+    2. 等于上一个 Epoch：仅在宽限期（Grace Window）内有效。
+    3. 其他情况：无效。
+    """
+    if duration <= 0:
+        raise ValueError("epoch duration must be > 0")
+    if grace < 0:
+        raise ValueError("epoch grace must be >= 0")
+
+    current_epoch = int(now_ts // duration)
+
+    # 情况 1：当前纪元
+    if ticket_epoch == current_epoch:
+        return True
+
+    # 情况 2：上一个纪元，检查是否处于宽限期
+    if ticket_epoch == current_epoch - 1:
+        # 当前纪元刚开始多久
+        seconds_into_current = now_ts % duration
+        return seconds_into_current < grace
+
+    return False

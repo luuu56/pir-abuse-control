@@ -246,7 +246,43 @@
 - [ ] 将 `scripts/test_day17_full_e2e.py` 中 issuer / pir_server 连接提示也改为从配置打印
 - [ ] 将 Day 17 结果同步到 `docs/admission.md` / 相关设计文档（如尚未补齐）
 
+## Day 18：epoch 时间窗
+- [x] 定义统一 epoch 配置：
+  - [x] `epoch.duration_sec`
+  - [x] `epoch.grace_window_sec`
+- [x] 在 `common/crypto_utils.py` 中新增：
+  - [x] `get_current_epoch_id(epoch_duration)`
+  - [x] `is_epoch_valid(ticket_epoch, now_ts, duration, grace)`
+- [x] 在 Issuer challenge 阶段动态写入当前 `epoch_id`
+- [x] 保持 Ticket 结构不变，继续使用 `t = (SN, sigma, EpochID)`
+- [x] 在 Issuer `/issue` 前增加 epoch 有效性检查
+- [x] 在 Verifier `/execute` 前增加 epoch 前置快拒绝
+- [x] 统一 Issuer / Verifier 的 epoch 判定逻辑，复用 `is_epoch_valid(...)`
+- [x] 为 `is_epoch_valid(...)` 补充输入边界保护：
+  - [x] `duration > 0`
+  - [x] `grace >= 0`
+- [x] 新增 `scripts/test_day18_epoch.py`
+- [x] 将 Day 18 过期测试改为确定性方案：
+  - [x] 不再使用 `epoch - 1`
+  - [x] 改为 `epoch - 2`，确保无论是否处于宽限期都会被拒绝
 
+### Day 18 验收结果
+- [x] 当前 epoch 的 ticket 仍可正常签发
+- [x] 将 ticket 强制改为两个纪元之前后，Verifier 返回 `decision=REJECTED`
+- [x] `reason` 明确包含 `expired`
+- [x] Verifier 日志出现 `Fast-rejecting expired ticket epoch`
+
+### Day 18 结论
+- [x] epoch 已定义并进入统一配置
+- [x] Ticket 已动态携带 EpochID
+- [x] Verifier 已检查当前 epoch
+- [x] 过期票据被成功拒绝
+- [x] Day 18 已完成
+
+### Day 18 小收尾
+- [ ] 将 issuer/client/verifier 中原始 `client_tag` 日志继续收口为 hash 截断值
+- [ ] 视需要补一个“上一个 epoch 但处于 grace window 内仍可通过”的正例测试
+- [ ] 将 Day 18 结果同步进相关设计文档（如 `docs/admission.md` / epoch 说明）
 ---
 
 ## 当前项目状态总结

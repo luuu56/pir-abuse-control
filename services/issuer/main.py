@@ -21,7 +21,9 @@ from common.logging_utils import setup_logger
 from common.crypto_utils import (
     canonical_json_bytes,
     compute_hmac,
-    verify_pow
+    verify_pow,
+    get_current_epoch_id,
+    is_epoch_valid
 )
 from common.models import (
     AdmissionPayload,
@@ -46,8 +48,12 @@ SERVER_PORT = issuer_config.get("port", 8001)
 HMAC_SECRET = issuer_config.get("hmac_secret", "issuer-secret-key-change-me")
 POW_DIFFICULTY = issuer_config.get("difficulty_bits", 16)
 CHALLENGE_TTL = issuer_config.get("challenge_ttl_sec", 300)
-GRACE_WINDOW = issuer_config.get("grace_window_sec", 60)
 REDIS_PREFIX = issuer_config.get("redis_prefix", "admission:challenge")
+
+# 提取 Epoch 统一配置块
+epoch_cfg = config.get("epoch", {})
+EPOCH_DURATION = epoch_cfg.get("duration_sec", 3600)
+GRACE_WINDOW = epoch_cfg.get("grace_window_sec", 300)
 
 # Redis 初始化 (用于 Challenge 烧毁/防重放)
 redis_cfg = config.get("redis", {})
@@ -59,7 +65,6 @@ redis_client = redis.Redis(
 )
 
 # --- 2. 初始化 FastAPI ---
-# --- 在 services/issuer/main.py 顶部补回这个模型 ---
 class RSAPublicKeyResponse(BaseModel):
     n: str = Field(..., description="RSA Modulus (Hex string, lower case, zero-padded, no '0x')")
     e: str = Field(..., description="RSA Public Exponent (Hex string)")
@@ -87,10 +92,8 @@ def verify_admission_logic(proof: AdmissionResponse) -> tuple[bool, str, Optiona
         if int(time.time()) > proof.challenge.payload.expires_at:
             return False, "Challenge expired", None
 
-        # 3. Epoch ID 最小存根校验 (与 Day 15 定稿对齐)
-        # TODO: Day 18 接入全局 Epoch 轮转视图
-        if proof.challenge.payload.epoch_id != 1:
-            return False, "Invalid epoch_id for current window", None
+        # 3. Epoch ID 最小存根校验 (替换掉原来的写死1的校验，转由 is_epoch_valid 统一负责)
+        # 此处我们允许 /issue 里使用最新统一逻辑验证，详见 issue_ticket
 
         # 4. PoW 校验
         if not verify_pow(
@@ -114,11 +117,11 @@ def verify_admission_logic(proof: AdmissionResponse) -> tuple[bool, str, Optiona
 def health_check():
     return {"status": "ok", "service": "issuer", "redis": redis_client.ping()}
 
-# services/issuer/main.py 新增接口
 @app.get("/api/v1/issuer/public_key", response_model=RSAPublicKeyResponse)
 async def get_public_key():
     """获取 Issuer 动态生成的 RSA 公钥 (Client/Verifier 统一从这里拉取)"""
     return crypto_manager.get_public_key()
+
 
 @app.post("/api/v1/issuer/challenge", response_model=AdmissionChallenge)
 async def request_challenge(req: ChallengeRequest):
@@ -127,9 +130,10 @@ async def request_challenge(req: ChallengeRequest):
     client_tag 由客户端自报，用于短时上下文标识。
     """
     now = int(time.time())
+    current_epoch = get_current_epoch_id(EPOCH_DURATION)
     payload = AdmissionPayload(
         client_tag=req.client_tag,
-        epoch_id=1,  # Day 16 stub
+        epoch_id=current_epoch,  # 动态纪元
         difficulty=POW_DIFFICULTY,
         issued_at=now,
         expires_at=now + CHALLENGE_TTL,
@@ -139,7 +143,7 @@ async def request_challenge(req: ChallengeRequest):
     payload_bytes = canonical_json_bytes(payload.model_dump())
     sig = compute_hmac(HMAC_SECRET, payload_bytes)
 
-    logger.info(f"Challenge issued for tag: {req.client_tag}, difficulty: {POW_DIFFICULTY}")
+    logger.info(f"Challenge issued for tag: {req.client_tag}, difficulty: {POW_DIFFICULTY}, epoch: {current_epoch}")
     return AdmissionChallenge(payload=payload, hmac_sig=sig)
 
 
@@ -158,8 +162,17 @@ async def verify_admission_endpoint(proof: AdmissionResponse):
 @app.post("/api/v1/issuer/issue", response_model=IssueResponse)
 async def blind_sign_endpoint(req: IssueRequest):
     """
-    阶段二：三重校验 (HMAC/Expiry/PoW) + Redis 烧毁 + RSA 盲签。
+    阶段二：三重校验 (HMAC/Expiry/PoW) + Epoch 时效校验 + Redis 烧毁 + RSA 盲签。
     """
+    # 0. Epoch 有效性前置检查 (Day 18 补齐，使用对齐后的配置)
+    ticket_epoch = req.admission_proof.challenge.payload.epoch_id
+    if not is_epoch_valid(ticket_epoch, int(time.time()), EPOCH_DURATION, GRACE_WINDOW):
+        logger.warning(f"Refusing to sign: Epoch {ticket_epoch} is invalid (outside duration + grace).")
+        raise HTTPException(
+            status_code=403,
+            detail="The requested epoch has expired. Please re-apply for a fresh challenge."
+        )
+
     # 1. 逻辑校验
     ok, reason, payload_dict = verify_admission_logic(req.admission_proof)
     if not ok:
@@ -167,14 +180,12 @@ async def blind_sign_endpoint(req: IssueRequest):
         raise HTTPException(status_code=403, detail=reason)
 
     # 2. Redis 烧毁语义 (Anti-Replay)
-    # 计算唯一挑战指纹：SHA256(payload || sig)
     payload_bytes = canonical_json_bytes(payload_dict)
     challenge_fingerprint = hashlib.sha256(
         payload_bytes + bytes.fromhex(req.admission_proof.challenge.hmac_sig)
     ).hexdigest()
 
     key = f"{REDIS_PREFIX}:{challenge_fingerprint}"
-    # 计算 Redis TTL：过期时间 + 宽限期 - 当前时间
     ttl = max(1, (req.admission_proof.challenge.payload.expires_at + GRACE_WINDOW) - int(time.time()))
 
     # 原子占位，若已存在则说明是重放或已使用
@@ -194,10 +205,9 @@ async def blind_sign_endpoint(req: IssueRequest):
     # 4. 执行 RSA 盲签
     try:
         blind_sig_int = crypto_manager.blind_sign(blinded_msg_int)
-        # 严格遵守模长补零契约
         blind_sig_hex = f"{blind_sig_int:0{crypto_manager.pad_len_hex}x}"
 
-        logger.info(f"Ticket issued for tag: {req.admission_proof.challenge.payload.client_tag}")
+        logger.info(f"Ticket issued for tag: {req.admission_proof.challenge.payload.client_tag}, epoch: {ticket_epoch}")
         return IssueResponse(blinded_signature=blind_sig_hex)
 
     except ValueError as ve:
@@ -207,7 +217,6 @@ async def blind_sign_endpoint(req: IssueRequest):
         raise HTTPException(status_code=500, detail="Internal processing error")
 
 
-# --- 5. 启动入口 ---
 if __name__ == "__main__":
-    logger.info(f"Starting Issuer (Day 16) on {SERVER_HOST}:{SERVER_PORT}...")
+    logger.info(f"Starting Issuer (Day 18) on {SERVER_HOST}:{SERVER_PORT}...")
     uvicorn.run(app, host=SERVER_HOST, port=SERVER_PORT)

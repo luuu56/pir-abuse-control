@@ -615,3 +615,78 @@ LOG_N=14 D=8 go test -v -run=BW
 原因：
 - 主链刚打通，先巩固回归最划算
 - 当前项目执行规则仍是：主链路没通前，不深挖高级审计和兼容性
+## 2026-04-18
+
+## Day 18：epoch 时间窗接入完成
+
+### 完成内容
+1. **Epoch 公共契约落地**
+   - 在 `common/crypto_utils.py` 中新增：
+     - `get_current_epoch_id(epoch_duration)`
+     - `is_epoch_valid(ticket_epoch, now_ts, duration, grace)`
+   - 统一 Issuer / Verifier 的 epoch 有效性判定逻辑
+   - 为公共函数增加输入边界保护：
+     - `duration <= 0` 拒绝
+     - `grace < 0` 拒绝
+
+2. **配置层新增 epoch 参数**
+   - 在 `configs/common/base.yaml` 中新增：
+     - `epoch.duration_sec`
+     - `epoch.grace_window_sec`
+
+3. **Issuer 接入动态 epoch**
+   - `/challenge` 中不再写死 `epoch_id`
+   - 改为根据当前时间动态计算当前纪元
+   - `/issue` 在 blind sign 前增加 epoch 有效性检查
+   - 避免签发“刚拿到就已过期”的 ticket
+
+4. **Verifier 接入 epoch 前置快拒绝**
+   - `/execute` 最前面先检查 `req.ticket.epoch_id`
+   - 若明显过期，直接返回业务拒绝
+   - 不再让过期票据继续进入验签 / binding / 状态机 / PIR 路径
+
+5. **Day 18 验收脚本**
+   - 新增 / 更新：
+     - `scripts/test_day18_epoch.py`
+   - 将测试从时间敏感方案改为确定性方案：
+     - 不再使用 `epoch - 1`
+     - 改为 `epoch - 2`
+
+### 运行结果
+执行：
+- `python scripts/test_day18_epoch.py`
+
+结果：
+1. Step 1：获取当前 epoch 的 ticket 成功
+   - `✅ Acquired ticket for Epoch: 493473`
+
+2. Step 2：将 ticket 强制篡改为两个纪元之前
+   - `expired_ticket.epoch_id = ticket.epoch_id - 2`
+
+3. Verifier 返回：
+   - `Status Code: 200`
+   - `Decision: REJECTED`
+   - `Reason: Ticket epoch 493471 has expired.`
+
+4. Verifier 日志：
+   - `Fast-rejecting expired ticket epoch: 493471`
+
+### 关键结论
+- Day 18 目标已完成：
+  - epoch 已定义
+  - 票据带 EpochID
+  - verifier 检查当前 epoch
+  - 过期票据被拒
+- Day 18 未破坏 Day 17 已打通的签票主链
+- epoch 时间窗已正式进入 Ticket 与 Verifier 的验证语义
+
+### 当前限制 / 备注
+- 当前验收覆盖了“显著过期票据被拒”
+- 如后续需要，可再补一个“上一个 epoch 且处于 grace window 内可通过”的正例测试
+- issuer/client/verifier 日志中的原始 `client_tag` 仍建议后续收口为 hash 截断值
+
+### 下一步建议
+优先继续做端到端回归与联调脚本稳定化，而不是立即深挖 Auditor。
+原因：
+- 主链刚完成 admission + blind ticket + epoch 收口
+- 先保证回归稳定最划算

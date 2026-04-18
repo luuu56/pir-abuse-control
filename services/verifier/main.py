@@ -19,7 +19,8 @@ from services.verifier.crypto import crypto_manager
 from services.verifier.state_manager import state_manager
 from common.crypto_utils import (
     derive_sk_t, compute_query_commitment,
-    serialize_witness, compute_binding_tag
+    serialize_witness, compute_binding_tag,
+    is_epoch_valid
 )
 
 config = load_config()
@@ -36,6 +37,11 @@ ISSUER_URL = f"http://{issuer_cfg.get('host', '127.0.0.1')}:{issuer_cfg.get('por
 pir_cfg = config.get("pir_server", {})
 PIR_SERVER_URL = f"http://{pir_cfg.get('host', '127.0.0.1')}:{pir_cfg.get('port', 8003)}/api/v1/pir"
 
+# 提取 Epoch 统一配置块
+epoch_cfg = config.get("epoch", {})
+EPOCH_DURATION = epoch_cfg.get("duration_sec", 3600)
+GRACE_WINDOW = epoch_cfg.get("grace_window_sec", 300)
+
 # 缓存公钥（当前为单进程原型缓存）
 issuer_public_key = {"n": None, "e": None}
 
@@ -43,13 +49,11 @@ issuer_public_key = {"n": None, "e": None}
 def fetch_issuer_public_key():
     logger.info("Fetching public key from Issuer...")
     try:
-        resp = requests.post(f"{ISSUER_URL}/challenge", json={"client_id": "verifier_init"}, timeout=5)
+        # 新逻辑：直接拉取纯净的公钥
+        resp = requests.get(f"{ISSUER_URL}/public_key", timeout=5)
         resp.raise_for_status()
-        data = resp.json()
+        pub_key = resp.json()
 
-        if "public_key" not in data:
-            raise RuntimeError("Issuer response missing 'public_key'")
-        pub_key = data["public_key"]
         if "n" not in pub_key or "e" not in pub_key:
             raise RuntimeError("Public key structure invalid (missing n or e)")
 
@@ -72,7 +76,9 @@ async def lifespan(app: FastAPI):
     fetch_issuer_public_key()
     yield
 
+
 app = FastAPI(title="PIR Abuse Control - Verifier Service", version="1.0", lifespan=lifespan)
+
 
 # --- 独立封装的网络桥接层 ---
 async def call_pir_server(query_payload: str) -> tuple[bool, str]:
@@ -103,12 +109,21 @@ async def call_pir_server(query_payload: str) -> tuple[bool, str]:
         return False, "unknown_error"
 
 
-# 注意：改为 async def，因为内部有了网络层 await
 @app.post("/api/v1/verifier/execute", response_model=PIRResponse)
 async def execute_query(req: RequestInstance):
     logger.info(f"Received request {req.request_id} for SN: {req.ticket.sn[:16]}...")
 
-    # --- 0. 检查当前状态 (拦截非 UNUSED 状态的票据) ---
+    # --- 0. 纪元时间窗检查 (Day 18: 前置快拒绝) ---
+    if not is_epoch_valid(req.ticket.epoch_id, int(time.time()), EPOCH_DURATION, GRACE_WINDOW):
+        logger.warning(f"Fast-rejecting expired ticket epoch: {req.ticket.epoch_id}")
+        return PIRResponse(
+            request_id=req.request_id,
+            decision=Decision.REJECTED,
+            ticket_state=TicketState.UNUSED,
+            reason=f"Ticket epoch {req.ticket.epoch_id} has expired."
+        )
+
+    # --- 1. 检查当前状态 (拦截非 UNUSED 状态的票据) ---
     current_state = state_manager.get_state(req.ticket.sn)
     if current_state in (TicketState.CONSUMED, TicketState.PENDING, TicketState.FAILED):
         logger.warning(f"Request {req.request_id} REJECTED: Ticket is {current_state.value}")
@@ -117,7 +132,7 @@ async def execute_query(req: RequestInstance):
             ticket_state=current_state, reason=f"Ticket already {current_state.value}"
         )
 
-    # --- 1. 获取公钥与验证票据签名 ---
+    # --- 2. 获取公钥与验证票据签名 ---
     if issuer_public_key["n"] is None:
         fetch_issuer_public_key()
         if issuer_public_key["n"] is None:
@@ -137,12 +152,12 @@ async def execute_query(req: RequestInstance):
             ticket_state=TicketState.UNUSED, reason="Invalid Ticket Signature"
         )
 
-    # --- 2. 验证绑定 (Binding Consistency Check) ---
+    # --- 3. 验证绑定 (Binding Consistency Check) ---
     if req.witness is None:
         return PIRResponse(request_id=req.request_id, decision=Decision.REJECTED, ticket_state=TicketState.UNUSED,
                            reason="Missing Request Witness")
 
-        # 优化可读性：将 expected_c_q 提至外部，避免后续 Audit Stub 引用悬空
+    # 优化可读性：将 expected_c_q 提至外部，避免后续 Audit Stub 引用悬空
     expected_c_q = compute_query_commitment(req.query_payload)
 
     try:
@@ -159,7 +174,7 @@ async def execute_query(req: RequestInstance):
         return PIRResponse(request_id=req.request_id, decision=Decision.REJECTED, ticket_state=TicketState.UNUSED,
                            reason="Internal Error during Binding Verification")
 
-    # --- 3. 原子锁定为 PENDING (防双花) ---
+    # --- 4. 原子锁定为 PENDING (防双花) ---
     if not state_manager.try_lock(req.ticket.sn, lock_ttl_sec=30):
         logger.warning(f"Request {req.request_id} REJECTED: Failed to lock ticket (Concurrency attack?)")
         return PIRResponse(
@@ -168,11 +183,11 @@ async def execute_query(req: RequestInstance):
         )
     logger.info(f"Ticket {req.ticket.sn[:16]} state transition: UNUSED -> PENDING")
 
-    # --- 4. 通过 HTTP 转发至 PIR Server (网络桥接) ---
+    # --- 5. 通过 HTTP 转发至 PIR Server (网络桥接) ---
     is_success, pir_result_or_err = await call_pir_server(req.query_payload)
 
     if is_success:
-        # --- 5a. 执行成功 -> CONSUMED ---
+        # --- 6a. 执行成功 -> CONSUMED ---
         state_manager.mark_consumed(req.ticket.sn)
         final_decision = Decision.SUCCESS
         final_state = TicketState.CONSUMED
@@ -180,7 +195,7 @@ async def execute_query(req: RequestInstance):
         pir_data = pir_result_or_err
         logger.info(f"Ticket {req.ticket.sn[:16]} state transition: PENDING -> CONSUMED")
     else:
-        # --- 5b. 执行异常或超时 -> FAILED (票据严格烧毁) ---
+        # --- 6b. 执行异常或超时 -> FAILED (票据严格烧毁) ---
         state_manager.mark_failed(req.ticket.sn)
         final_decision = Decision.REJECTED
         final_state = TicketState.FAILED
@@ -189,7 +204,8 @@ async def execute_query(req: RequestInstance):
         pir_data = None
         # 但在日志中记录精细化错误分类，方便后续排障
         logger.error(f"PIR Execution failed due to [{pir_result_or_err}]. Ticket {req.ticket.sn[:16]} burned (FAILED).")
-    # --- 6. 审计留痕 (当前为本地组装与日志存根，下阶段接后台投递) ---
+
+    # --- 7. 审计留痕 (当前为本地组装与日志存根，下阶段接后台投递) ---
     audit_record_stub = {
         "request_id": req.request_id,
         "sn": req.ticket.sn,
