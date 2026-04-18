@@ -772,3 +772,88 @@ LOG_N=14 D=8 go test -v -run=BW
 - 在 Verifier 中重算 `c_q`
 - 重算 `binding_tag`
 - 拒绝篡改 `q / b / w`
+## 2026-04-18
+
+## Day 20：binding verify 完成
+
+### 完成内容
+1. **Verifier 侧 Binding Consistency Check 落地**
+   - 在 `services/verifier/main.py` 中实现真实 binding 校验逻辑
+   - verifier 当前不再只信任客户端提交的 `binding_tag`
+   - 而是基于请求内容重算：
+     - `c_q = H(q)`
+     - `sk_t = derive_sk_t(sigma_bytes, sn, epoch_id)`
+     - `witness_bytes = serialize_witness(witness)`
+     - `expected_binding_tag = HMAC(sk_t, c_q || w)`
+
+2. **绑定标签比较收口**
+   - 将 `req.binding_tag == expected_binding_tag` 改为：
+     - `hmac.compare_digest(req.binding_tag, expected_binding_tag)`
+   - 避免简单字符串比较
+
+3. **异常兜底补齐**
+   - 对以下情况统一返回业务拒绝，而不是炸 500：
+     - 非法 base64
+     - 缺失字段
+     - 非法 binding 材料
+   - 当前对外收口语义：
+     - `Invalid Binding Material`
+
+4. **缺失 witness 分支补齐**
+   - 若 `req.witness is None`
+   - 直接返回：
+     - `decision=REJECTED`
+     - `reason="Missing Request Witness"`
+
+5. **Day 20 验收脚本**
+   - 新增 / 收口：
+     - `scripts/test_day20_binding_verify.py`
+   - 从配置读取 verifier 地址
+   - 增加 timeout
+   - 负例先行，正例最后，避免票据被提前消费
+
+### 运行结果
+执行：
+- `python scripts/test_day20_binding_verify.py`
+
+结果：
+1. 合法 Ticket 与合法 Bound Request 生成成功
+2. 篡改 `q` -> 被拒绝
+3. 篡改 `binding_tag` -> 被拒绝
+4. 篡改 `witness.nonce` -> 被拒绝
+5. 移除 `witness` -> 被拒绝
+6. 原始合法请求 -> 成功通过并执行
+
+关键输出：
+- `✅ Defender Win: Tampered query correctly rejected.`
+- `✅ Defender Win: Tampered binding tag correctly rejected.`
+- `✅ Defender Win: Tampered witness correctly rejected.`
+- `✅ Defender Win: Missing witness correctly rejected.`
+- `✅ Genuine request correctly accepted and executed (Ticket Consumed).`
+- `🎉 [PASS] Day 20 Acceptance Criteria Met: All verification branches tested and passed!`
+
+### 关键结论
+- Day 20 目标已完成：
+  - verifier 检查 `BindConsistent`
+  - 篡改 `q / b / w` 会拒绝
+  - 缺失 `witness` 会拒绝
+  - 合法请求仍可通过
+- binding check 已从“客户端生成”推进到“verifier 真实校验”
+- Day 19–20 的 binding 链已经闭合
+
+### 当前限制 / 备注
+- 当前测试已覆盖 q/b/w/missing witness/happy path
+- 后续如需进一步强化，可增加：
+  - 非法 `ticket.sigma` 的 binding 材料异常测试
+- issuer/client/verifier 中原始 `client_tag` 日志仍建议后续继续收口为 hash 截断值
+
+### 下一步建议
+进入 Day 21：本周联调
+重点：
+- 正常请求
+- 无票据请求
+- 过期票据
+- 篡改 binding 请求
+目标：
+- 所有场景被真实区分处理
+- 收口为一份周联调 / 回归脚本

@@ -325,6 +325,47 @@
 - [ ] 继续收口 issuer/client/verifier 中原始 `client_tag` 的日志脱敏
 - [ ] 将 Day 19 结果同步进相关设计文档（如 binding 说明）
 
+## Day 20：binding verify
+- [x] 在 `services/verifier/main.py` 中实现 Binding Consistency Check
+- [x] verifier 侧重算：
+  - [x] `c_q = H(q)`
+  - [x] `sk_t = derive_sk_t(sigma_bytes, sn, epoch_id)`
+  - [x] `witness_bytes = serialize_witness(witness)`
+  - [x] `expected_binding_tag = HMAC(sk_t, c_q || w)`
+- [x] 对 `binding_tag` 比较改为 `hmac.compare_digest(...)`
+- [x] 增加 `req.witness is None` 的缺失分支拒绝
+- [x] 增加 binding 验证异常兜底：
+  - [x] 非法 base64 / 非法 witness / 非法 binding 材料统一返回业务拒绝
+- [x] 新增 `scripts/test_day20_binding_verify.py`
+- [x] 测试脚本从配置读取 `VERIFIER_URL`
+- [x] 测试脚本增加 timeout，避免联调挂死
+- [x] 测试脚本覆盖以下分支：
+  - [x] 篡改 `q`
+  - [x] 篡改 `b`
+  - [x] 篡改 `w`
+  - [x] 缺失 `witness`
+  - [x] 合法请求 happy path
+
+### Day 20 验收结果
+- [x] Tampered `q` 被拒绝
+- [x] Tampered `b` 被拒绝
+- [x] Tampered `w` 被拒绝
+- [x] Missing `witness` 被拒绝
+- [x] 合法请求成功通过并执行
+- [x] binding check 真实生效
+
+### Day 20 结论
+- [x] verifier 已检查 `BindConsistent`
+- [x] 篡改 `q / b / w` 会拒绝
+- [x] 缺失 `witness` 会拒绝
+- [x] 合法请求仍可通过
+- [x] Day 20 已完成
+
+### Day 20 小收尾
+- [ ] 将测试脚本中的失败分支进一步补充 `resp.text` 输出，便于未来排障
+- [ ] 继续收口 issuer/client/verifier 中原始 `client_tag` 的日志脱敏
+- [ ] 将 Day 20 结果同步进 binding / verifier 相关设计文档
+
 ## 当前项目状态总结
 - Issuer blind-sign 已跑通
 - Client ticket acquisition 已跑通

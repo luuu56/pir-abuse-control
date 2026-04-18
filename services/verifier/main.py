@@ -4,6 +4,7 @@ import base64
 import requests
 import time
 import httpx
+import hmac  # 新增导入
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
@@ -166,13 +167,16 @@ async def execute_query(req: RequestInstance):
         witness_bytes = serialize_witness(req.witness.model_dump())
         expected_binding_tag = compute_binding_tag(expected_sk_t, expected_c_q, witness_bytes)
 
-        if req.binding_tag != expected_binding_tag:
+        # 引入常量时间比较，防时序攻击
+        if not hmac.compare_digest(req.binding_tag, expected_binding_tag):
             return PIRResponse(request_id=req.request_id, decision=Decision.REJECTED,
                                ticket_state=TicketState.UNUSED, reason="Binding Consistency Check Failed")
+
     except Exception as e:
-        logger.error(f"Error during binding verification: {e}")
-        return PIRResponse(request_id=req.request_id, decision=Decision.REJECTED, ticket_state=TicketState.UNUSED,
-                           reason="Internal Error during Binding Verification")
+        # 异常兜底：非法 base64、缺失字段等导致计算崩溃，统一返回拒绝，不炸 500
+        logger.warning(f"Binding verification error: {e}")
+        return PIRResponse(request_id=req.request_id, decision=Decision.REJECTED,
+                           ticket_state=TicketState.UNUSED, reason="Invalid Binding Material")
 
     # --- 4. 原子锁定为 PENDING (防双花) ---
     if not state_manager.try_lock(req.ticket.sn, lock_ttl_sec=30):
