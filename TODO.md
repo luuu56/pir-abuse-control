@@ -159,7 +159,38 @@
 - [ ] 为网络桥接补充单独联调脚本或回归记录
 ## 进行中 / 下一步
 
+### Day 14：本周重构与单测
+- [x] 为 blind issue / verify 补充核心单测
+- [x] 新增 `tests/test_crypto_core.py`
+- [x] 完成以下单测覆盖：
+  - [x] `encode_ticket_message()` 输入边界校验
+  - [x] `sigma` Base64 严格契约反例
+  - [x] `blind_message()` 对 `m >= n` 的拒绝
+  - [x] `integer_to_base64()` / `base64_to_integer()` round-trip
+  - [x] blind issue -> unblind -> verify 全链路 happy path
+  - [x] 篡改 `SN / EpochID / sigma` 的验签拒绝
+- [x] 清理错误码和 API 语义
+- [x] 保持 blind-sign 为唯一主线，不再保留普通签名占位
 
+### Day 13+：Verifier / PIR Server 串联（第一阶段）
+- [x] 建立 `services/pir_server/main.py` HTTP 适配层（Stub）
+- [x] 暴露 `/api/v1/pir/query`
+- [x] 将 Verifier 中本地 stub 执行替换为 HTTP 网络桥接
+- [x] 抽离 `call_pir_server()`，避免 `/execute` 路由继续膨胀
+- [x] 将 PIR 执行结果与票据状态推进绑定：
+  - [x] PIR 成功 -> `PENDING -> CONSUMED`
+  - [x] PIR 失败 -> `PENDING -> FAILED`
+- [x] 保持 Day 12 生命周期语义在跨服务模式下不回退
+- [x] 增加审计本地存根：
+  - [x] 在 Verifier 本地组装 `audit_record_stub`
+  - [x] 先以日志方式留痕，不立即强绑定 Auditor HTTP 投递
+
+### 下一步：Auditor / 审计闭环（第二阶段）
+- [ ] 建立 `services/auditor/main.py` HTTP 存根
+- [ ] 暴露 `/api/v1/auditor/report`
+- [ ] 将当前 `[Audit Stub]` 升级为后台 HTTP 上报
+- [ ] 明确审计记录字段与 `common.models.AuditRecord` 一致
+- [ ] 验证 Auditor 不可用时不影响 Verifier 主决策返回
 
 ---
 
@@ -176,5 +207,11 @@
 - Issuer blind-sign 已跑通
 - Client ticket acquisition 已跑通
 - Verifier ticket signature verification 已跑通
-- Day 10 已通过端到端正反例验收
-- 下一阶段重点：Binding + Redis 原子防重放
+- Day 11 Binding 校验已完成
+- Day 12 Redis 原子防重放与状态流转已完成
+- Day 12 生命周期 4 条关键分支已通过联调验收
+- Day 13 blind-sign 全链路正反例已通过
+- Day 13+ 第一阶段 Verifier -> PIR Server 网络桥接已落地
+- Day 14 第一批 blind-sign / verify 核心单测已通过（6 passed）
+- 当前审计仍为本地日志存根
+- 下一阶段重点：Auditor HTTP 存根 + 审计闭环

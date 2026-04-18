@@ -9,7 +9,8 @@ from pathlib import Path
 from common.models import RequestContext, RequestInstance
 from common.crypto_utils import (
     derive_sk_t, compute_query_commitment,
-    serialize_witness, compute_binding_tag
+    serialize_witness, compute_binding_tag,
+    integer_to_base64  # <--- 新增导入
 )
 
 # 将根目录加入 sys.path
@@ -98,10 +99,8 @@ def acquire_ticket() -> Ticket:
         raise RuntimeError("Cryptographic integrity check failed during unblinding")
     logger.info("Local verification passed: Signature is valid.")
 
-    unblinded_sig_hex = f"{unblinded_sig_int:0{pad_len}x}"
-
-    # sigma 采用“定长模数字节串”的 Base64 编码，Verifier 侧后续必须按此约定还原签名整数
-    sigma_b64 = base64.b64encode(bytes.fromhex(unblinded_sig_hex)).decode('utf-8')
+    modulus_bytes_len = (n.bit_length() + 7) // 8
+    sigma_b64 = integer_to_base64(unblinded_sig_int, modulus_bytes_len)
 
     # 5. 组装 Ticket
     ticket = Ticket(sn=sn_hex, sigma=sigma_b64, epoch_id=epoch_id)

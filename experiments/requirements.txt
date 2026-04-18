@@ -1,0 +1,7 @@
+pytest
+pycryptodome
+pydantic
+PyYAML
+requests
+httpx
+redis

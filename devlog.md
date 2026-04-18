@@ -391,3 +391,55 @@ LOG_N=14 D=8 go test -v -run=BW
   1. Auditor HTTP 存根搭建
   2. 审计记录字段与模型对齐
   3. 后台投递方式的最小闭环验证
+
+## Day 14：blind-sign 主链路收口与核心单测通过
+
+**日期**：2026-04-17
+
+### 完成内容
+1. **blind-sign / verify 核心单测**
+   - 新增 `tests/test_crypto_core.py`
+   - 使用 `pytest` 跑通第一批核心单测
+   - 当前测试覆盖：
+     - `encode_ticket_message()` 输入边界
+     - `sigma` Base64 严格契约反例
+     - `blind_message()` 对 `m >= n` 的拒绝
+     - `integer_to_base64()` / `base64_to_integer()` round-trip
+     - blind issue -> unblind -> verify happy path
+     - 篡改 `SN / EpochID / sigma` 的拒绝路径
+
+2. **测试结果**
+   - 执行：
+     - `PYTHONPATH=. pytest -q tests/test_crypto_core.py`
+   - 结果：
+     - `6 passed in 0.86s`
+
+3. **错误码和 API 收口**
+   - 持续清理 Verifier 拒绝分支的返回语义
+   - 保持业务拒绝路径统一走：
+     - `PIRResponse(decision=REJECTED, ...)`
+   - 保持系统不可用路径（如 Issuer 公钥不可用）与业务拒绝语义分离
+   - 清理 blind-sign 主链路中的普通签名占位残留，保持 blind-sign 为唯一主线
+
+4. **与前一阶段的衔接**
+   - 当前 blind-sign 主链路已具备：
+     - 端到端联调脚本
+     - Day 12 生命周期回归
+     - Day 13 全链路正反例
+     - Day 14 核心单测
+   - 说明当前主链路已进入“可回归、可收口”的状态
+
+### 关键记录
+- 当前 Day 14 的重点不是继续扩服务数量，而是先把已有 blind-sign 主链路压实
+- 现阶段已确认：
+  - blind issue / unblind / verify / ticket object 贯通稳定
+  - Verifier -> PIR Server 网络桥接未破坏 Day 12 生命周期语义
+  - blind-sign 已不再需要普通签名占位路径
+
+### 结论
+- Day 14 的前半与后半已完成收口
+- blind-sign 主链路当前已具备稳定回归基础
+- 下一步应进入：
+  1. Auditor HTTP 存根
+  2. 审计字段与模型对齐
+  3. 后台投递与最小审计闭环验证
