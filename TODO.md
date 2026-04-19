@@ -778,6 +778,41 @@
 - [ ] 收口 `DB_NUM_ENTRIES` / `NUM_ENTRIES` 的统一来源，避免双边手工漂移
 - [ ] 进一步规范 `engine_meta` 字段
 - [ ] 明确 Day 31 最终版错误码 / reason 文案
+## Day 32：主链路联调
+- [x] Verifier 已支持接收并透传 PIR Server 的结构化返回：
+  - [x] `result_string`
+  - [x] `mapped_index`
+  - [x] `recovered_val`
+- [x] `call_pir_server()` 已升级为返回四元组：
+  - [x] `success`
+  - [x] `payload_or_error`
+  - [x] `mapped_index`
+  - [x] `recovered_val`
+- [x] Verifier 成功分支已将真实 PIR 结果写入 `PIRResponse.data`
+- [x] Verifier 失败分支已保持：
+  - [x] `PENDING -> FAILED`
+  - [x] 返回失败 `reason`
+- [x] Auditor 后台投递已继续工作，且当前未强行扩展 `mapped_index` 字段，避免模型阻塞主链
+- [x] 新增并跑通 `scripts/test_day32_full_pipeline.py`
+- [x] 全链路 Happy Path 联调通过：
+  - [x] client 获取 ticket
+  - [x] client 生成 binding
+  - [x] verifier 放行
+  - [x] pir_server 调真实 PIR
+  - [x] verifier 返回真实 PIR 结果
+- [x] 验收通过：
+  - [x] `decision == SUCCESS`
+  - [x] `mapped_index` 与预期一致
+  - [x] `recovered_val` 与预期一致
+
+### Day 32 结论
+- [x] 合法请求已能返回真实 PIR 结果
+- [x] Day 32 主链路联调完成
+
+### Day 32 后续衔接
+- [ ] Day 33：验证非法请求不会进入 PIR
+- [ ] 进一步观察 auditor 后台投递日志是否稳定
+- [ ] 视需要统一 `result_string / recovered_val / mapped_index` 的最终响应字段命名
 
 ## 当前项目状态总结
 - Issuer blind-sign 已跑通

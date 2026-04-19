@@ -5,6 +5,7 @@ import requests
 import time
 import httpx
 import hmac
+from typing import Any
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, BackgroundTasks
@@ -32,7 +33,7 @@ verifier_cfg = config.get("verifier", {})
 SERVER_HOST = verifier_cfg.get("host", "127.0.0.1")
 SERVER_PORT = verifier_cfg.get("port", 8002)
 ISSUER_URL = f"http://{config.get('issuer', {}).get('host', '127.0.0.1')}:{config.get('issuer', {}).get('port', 8001)}/api/v1/issuer"
-PIR_SERVER_URL = f"http://{config.get('pir_server', {}).get('host', '127.0.0.1')}:{config.get('pir_server', {}).get('port', 8003)}/api/v1/pir"
+PIR_SERVER_URL = f"http://{config.get('pir_server', {}).get('host', '127.0.0.1')}:{config.get('pir_server', {}).get('port', 8003)}/api/v1/pir/query" # 修正了 endpoint 以对齐 pir_server
 AUDITOR_URL = f"http://{config.get('auditor', {}).get('host', '127.0.0.1')}:{config.get('auditor', {}).get('port', 8004)}/api/v1/auditor/report"
 
 # Epoch 逻辑参数
@@ -89,27 +90,32 @@ async def query_ticket_state(sn: str):
     return {"sn": sn, "ticket_state": state.value}
 
 
-async def call_pir_server(query_payload: str) -> tuple[bool, str]:
-    """后端桥接层"""
+# 修复 1：类型提示对齐 4 个返回值
+async def call_pir_server(query_payload: str) -> tuple[bool, Any, Any, Any]:
+    """
+    Day 32 升级：从 PIR Server 获取结构化结果并透传
+    """
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.post(f"{PIR_SERVER_URL}/query", json={"query_payload": query_payload}, timeout=15.0)
-            resp.raise_for_status()
-            return True, resp.json().get("data", "no_data")
-    except httpx.TimeoutException:
-        logger.error("PIR Server connection timed out.")
-        return False, "timeout"
-    except httpx.HTTPStatusError as e:
-        logger.error(f"PIR Server HTTP error: {e.response.status_code}")
-        return False, f"http_error_{e.response.status_code}"
-    # 细化恢复：网络请求级别的错误（如 Connection Refused）
-    except httpx.RequestError as e:
-        logger.error(f"PIR Server request failed (connection refused/aborted): {e}")
-        return False, "connection_error"
-    # 细化恢复：未知的代码层面异常
+            resp = await client.post(
+                PIR_SERVER_URL,
+                json={"query_payload": query_payload},
+                timeout=20.0
+            )
+            if resp.status_code == 200:
+                body = resp.json()
+                data = body.get("data")
+                mapped_index = body.get("mapped_index")
+                recovered_val = body.get("recovered_val")
+
+                logger.info(f"PIR Server returned SUCCESS. Index: {mapped_index}")
+                return True, data, mapped_index, recovered_val
+            else:
+                logger.error(f"PIR Server Error: {resp.status_code} - {resp.text}")
+                return False, resp.text, None, None
     except Exception as e:
-        logger.error(f"Unexpected error calling PIR Server: {e}")
-        return False, "unknown_error"
+        logger.error(f"PIR Bridge Exception: {e}")
+        return False, str(e), None, None
 
 
 # ---------------------------------------------------------
@@ -203,28 +209,47 @@ async def execute_query(req: RequestInstance, background_tasks: BackgroundTasks)
     logger.info(f"Ticket {req.ticket.sn[:16]} state transition: UNUSED -> PENDING")
 
     # Step 4: 执行后端 PIR 服务
-    success, result = await call_pir_server(req.query_payload)
+    success, payload_or_error, mapped_index, recovered_val = await call_pir_server(req.query_payload)
 
-    # Step 5: 状态收敛与日志记录
+    # 修复 2：补充 reason 定义，供后续组装
     if success:
-        sm.mark_consumed(req.ticket.sn, epoch_id=req.ticket.epoch_id)
-        decision, state, reason, data = Decision.SUCCESS, TicketState.CONSUMED, "PIR execution completed", result
-        logger.info(f"Ticket {req.ticket.sn[:16]} state transition: PENDING -> CONSUMED")
+        get_state_manager().mark_consumed(req.ticket.sn, epoch_id=req.ticket.epoch_id)
+        decision = Decision.SUCCESS
+        reason = "PIR execution completed"
+        final_data = {
+            "result_string": payload_or_error,
+            "recovered_val": recovered_val,
+            "mapped_index": mapped_index
+        }
     else:
-        sm.mark_failed(req.ticket.sn, epoch_id=req.ticket.epoch_id)
-        decision, state, reason, data = Decision.REJECTED, TicketState.FAILED, "PIR execution failed, ticket burned", None
-        logger.error(f"PIR Failure [{result}]. Ticket {req.ticket.sn[:16]} burned (FAILED).")
+        get_state_manager().mark_failed(req.ticket.sn, epoch_id=req.ticket.epoch_id)
+        decision = Decision.REJECTED
+        reason = f"PIR execution failed, ticket burned. Error: {payload_or_error}"
+        final_data = None
 
-    # Step 6: 异步审计投递
-    audit_data = {
-        "request_id": req.request_id, "sn": req.ticket.sn, "query_commitment": expected_c_q,
-        "binding_tag": req.binding_tag, "epoch_id": req.ticket.epoch_id,
-        "decision": decision.value, "reason": reason, "timestamp_ms": int(time.time() * 1000),
-        "prev_hash": "stub", "entry_mac": "stub"
+    # 修复 3：防 Auditor 模型崩溃，剔除 mapped_index，补齐完整所需字段
+    audit_payload = {
+        "request_id": req.request_id,
+        "sn": req.ticket.sn,
+        "query_commitment": expected_c_q,
+        "binding_tag": req.binding_tag,
+        "epoch_id": req.ticket.epoch_id,
+        "decision": decision.value,
+        "reason": reason,
+        "timestamp_ms": int(time.time() * 1000),
+        "prev_hash": "stub",
+        "entry_mac": "stub"
     }
-    background_tasks.add_task(dispatch_audit_log, audit_data)
+    # 修复 4：正确调用 dispatch_audit_log
+    background_tasks.add_task(dispatch_audit_log, audit_payload)
 
-    return PIRResponse(request_id=req.request_id, decision=decision, ticket_state=state, reason=reason, data=data)
+    return PIRResponse(
+        request_id=req.request_id,
+        decision=decision,
+        ticket_state=TicketState.CONSUMED if success else TicketState.FAILED,
+        reason=reason,
+        data=final_data
+    )
 
 
 if __name__ == "__main__":

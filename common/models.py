@@ -57,9 +57,9 @@ class AuditRecord(BaseModel):
 class PIRResponse(BaseModel):
     request_id: str
     decision: Decision
-    ticket_state: Optional[TicketState] = None  # 反馈票据最终状态
+    ticket_state: Optional[TicketState] = None
     reason: Optional[str] = None
-    data: Optional[Any] = None
+    data: Optional[Any] = None  # <--- 这里的 Any 是关键！
 
 # --- 准入原语相关模型 (Day 16 新增/修改) ---
 

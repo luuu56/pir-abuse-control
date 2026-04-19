@@ -1690,3 +1690,81 @@ PIR Server 日志显示：
 2. `engine_meta` 字段规范
 3. 错误码 / reason 文案标准化
 4. 决定是否保留固定基线模式供历史脚本继续回归
+## 2026-04-19
+
+## Day 32：主链路联调完成
+
+### 完成内容
+1. **Verifier 结果透传升级**
+   - `call_pir_server()` 已从简单成功/失败桥接升级为结构化返回：
+     - `success`
+     - `payload_or_error`
+     - `mapped_index`
+     - `recovered_val`
+   - verifier 成功分支已将真实 PIR 结果封装进 `PIRResponse.data`
+
+2. **PIR 成功 / 失败状态收敛保持一致**
+   - PIR 成功：
+     - `PENDING -> CONSUMED`
+     - `decision = SUCCESS`
+   - PIR 失败：
+     - `PENDING -> FAILED`
+     - `decision = REJECTED`
+   - 未破坏既有状态机语义
+
+3. **Auditor 后台投递继续保留**
+   - 当前审计投递仍正常挂在 background task 上
+   - 当天未强行把 `mapped_index` 扩进 auditor 模型，避免 auditor schema 阻塞主链 happy path
+
+4. **新增 Day 32 全链路验收脚本**
+   - 新增：
+     - `scripts/test_day32_full_pipeline.py`
+   - 脚本完成以下验证：
+     1. client 获取 ticket
+     2. client 构造 binding request
+     3. 请求提交 verifier
+     4. verifier 调真实 PIR
+     5. 返回结构化 `mapped_index / recovered_val`
+     6. 本地预测值与实际值一致
+
+### 验收结果
+执行：
+- `python scripts/test_day32_full_pipeline.py`
+
+结果：
+- `Status Code: 200`
+- `Decision: SUCCESS`
+- `Reason: PIR execution completed`
+
+实际返回：
+- `result_string = [REAL_SIMPLEPIR_ENGINE] Decrypted value from index 86 is: 8686`
+- `mapped_index = 86`
+- `recovered_val = 8686`
+
+本地预测：
+- `expected_index = 86`
+- `expected_val = 8686`
+
+比对结果：
+- `mapped_index` 一致
+- `recovered_val` 一致
+
+最终输出：
+- `Day 32 Success: Full pipeline from Blind-Sign to SimplePIR is verified!`
+
+### 关键结论
+- Day 32 验收已通过：
+  - 合法请求已能返回真实 PIR 结果
+- 当前系统已不再只是“模块可跑通”，而是已形成端到端主链 happy path：
+  - blind ticket
+  - admission
+  - binding
+  - verifier
+  - real PIR
+  - auditor background delivery
+
+### 下一步
+进入 Day 33 时，优先验证：
+1. 非法请求不会进入 PIR
+2. PIR 前后日志能清楚区分“被前置挡下”和“进入真实计算”
+3. 主链 happy path 不因 Day 33 的负例验证而回退
