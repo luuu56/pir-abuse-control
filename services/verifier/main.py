@@ -33,7 +33,7 @@ verifier_cfg = config.get("verifier", {})
 SERVER_HOST = verifier_cfg.get("host", "127.0.0.1")
 SERVER_PORT = verifier_cfg.get("port", 8002)
 ISSUER_URL = f"http://{config.get('issuer', {}).get('host', '127.0.0.1')}:{config.get('issuer', {}).get('port', 8001)}/api/v1/issuer"
-PIR_SERVER_URL = f"http://{config.get('pir_server', {}).get('host', '127.0.0.1')}:{config.get('pir_server', {}).get('port', 8003)}/api/v1/pir/query" # 修正了 endpoint 以对齐 pir_server
+PIR_SERVER_URL = f"http://{config.get('pir_server', {}).get('host', '127.0.0.1')}:{config.get('pir_server', {}).get('port', 8003)}/api/v1/pir/query"  # 修正了 endpoint 以对齐 pir_server
 AUDITOR_URL = f"http://{config.get('auditor', {}).get('host', '127.0.0.1')}:{config.get('auditor', {}).get('port', 8004)}/api/v1/auditor/report"
 
 # Epoch 逻辑参数
@@ -79,6 +79,28 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="PIR Abuse Control - Verifier", lifespan=lifespan)
+
+# --- Day 33 新增：轻量级内存监控指标 ---
+# 边界注意：此为单进程临时监控指标，重启后清零，不适用于多 worker 强一致性监控。
+verifier_metrics = {
+    "total_requests": 0,
+    "blocked_before_pir": 0,
+    "pir_invoked": 0  # 语义：已穿越前置盾牌，真正开始调用底层 PIR 计算的请求数（包含执行过程报错的）
+}
+
+
+@app.get("/api/v1/verifier/metrics")
+async def get_metrics():
+    """实时统计被拦截的恶意请求比例"""
+    total = verifier_metrics["total_requests"]
+    blocked = verifier_metrics["blocked_before_pir"]
+    ratio = (blocked / total * 100) if total > 0 else 0.0
+    return {
+        "total_requests": total,
+        "pir_invoked": verifier_metrics["pir_invoked"],
+        "blocked_before_pir": blocked,
+        "block_ratio_percent": round(ratio, 2)
+    }
 
 
 @app.get("/api/v1/verifier/ticket_state/{sn}")
@@ -187,10 +209,13 @@ async def execute_query(req: RequestInstance, background_tasks: BackgroundTasks)
     logger.info(f"Received request {req.request_id}...")
     sm = get_state_manager()
 
+    verifier_metrics["total_requests"] += 1
+
     # Step 1: 运行前置规则
     pre_err = _run_precondition_check(req, sm)
     if pre_err:
         logger.warning(f"Request {req.request_id} REJECTED: {pre_err.reason}")
+        verifier_metrics["blocked_before_pir"] += 1
         return pre_err
 
     # Step 2: 准备承诺并运行密码学校验
@@ -198,18 +223,28 @@ async def execute_query(req: RequestInstance, background_tasks: BackgroundTasks)
     crypto_err = _run_crypto_verification(req, expected_c_q)
     if crypto_err:
         logger.warning(f"Request {req.request_id} REJECTED: {crypto_err.reason}")
+        verifier_metrics["blocked_before_pir"] += 1
         return crypto_err
 
     # Step 3: 原子加锁 (PENDING)
     if not sm.try_lock(req.ticket.sn, lock_ttl_sec=30):
         logger.warning(f"Request {req.request_id} REJECTED: Concurrent/Pending Collision")
+        verifier_metrics["blocked_before_pir"] += 1
         return PIRResponse(request_id=req.request_id, decision=Decision.REJECTED, ticket_state=TicketState.PENDING,
                            reason="Concurrent ticket usage detected")
 
     logger.info(f"Ticket {req.ticket.sn[:16]} state transition: UNUSED -> PENDING")
 
+    # ==================== [Day 33 探针：严密监视进入 PIR 的请求] ====================
+    verifier_metrics["pir_invoked"] += 1
+    logger.info(
+        f"🚀 [PIR_START] Req:{req.request_id[:8]} | Invoking heavy SimplePIR backend for SN: {req.ticket.sn[:8]}...")
+
     # Step 4: 执行后端 PIR 服务
     success, payload_or_error, mapped_index, recovered_val = await call_pir_server(req.query_payload)
+
+    logger.info(f"🏁 [PIR_END] Req:{req.request_id[:8]} | SimplePIR backend execution finished. Success: {success}")
+    # ==============================================================================
 
     # 修复 2：补充 reason 定义，供后续组装
     if success:

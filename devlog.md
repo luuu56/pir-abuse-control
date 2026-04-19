@@ -1768,3 +1768,86 @@ PIR Server 日志显示：
 1. 非法请求不会进入 PIR
 2. PIR 前后日志能清楚区分“被前置挡下”和“进入真实计算”
 3. 主链 happy path 不因 Day 33 的负例验证而回退
+
+## 2026-04-19
+
+## Day 33：非法请求不进入 PIR 验证完成
+
+### 完成内容
+1. **Verifier 新增轻量级运行时 metrics**
+   - 当前在 verifier 内新增：
+     - `total_requests`
+     - `blocked_before_pir`
+     - `pir_invoked`
+   - 并通过：
+     - `/api/v1/verifier/metrics`
+     对外暴露当前统计信息
+
+2. **PIR 前后探针日志落地**
+   - 在 verifier 调用底层 PIR 前增加：
+     - `🚀 [PIR_START]`
+   - 在 verifier 接收底层 PIR 返回后增加：
+     - `🏁 [PIR_END]`
+   - 当前日志可用于人工排查某个请求是否真正进入了重计算阶段
+
+3. **Day 33 负例攻击脚本完成**
+   - 新增：
+     - `scripts/test_day33_abuse_prevention.py`
+   - 当前脚本会发射：
+     1. 1 个合法请求
+     2. 1 个篡改 binding 的恶意请求
+     3. 1 个缺失 ticket 的恶意请求
+     4. 1 个 replay 请求
+
+4. **业务层与指标层双重对账**
+   - 不仅验证 `decision == REJECTED`
+   - 还通过 metrics 对账验证：
+     - 非法请求没有真正进入 `call_pir_server()` 区域
+   - 当前使用的最硬指标为：
+     - `added_pir == 1`
+
+### 验收结果
+执行：
+- `python scripts/test_day33_abuse_prevention.py`
+
+结果如下：
+
+1. 合法请求：
+   - `SUCCESS`
+   - 成功进入真实 PIR
+
+2. 篡改 binding 请求：
+   - 被拦截
+   - 原因：
+     - `Binding Consistency Check Failed`
+
+3. 缺失 ticket 请求：
+   - 被拦截
+   - 原因：
+     - `Missing Ticket in request`
+
+4. replay 请求：
+   - 被拦截
+   - 原因：
+     - `Ticket already CONSUMED`
+
+最终 metrics 对账为：
+- `Total Requests Fired : 4`
+- `Business Blocked     : 3`
+- `Actual PIR Invoked   : 1`
+
+最终输出：
+- `Day 33 Success: PIR engine is perfectly isolated from malicious traffic!`
+
+### 关键结论
+- Day 33 验收通过：
+  - 非法请求不会触发 PIR 计算
+- 当前系统已经同时具备：
+  - Day 32 的 happy path 能力
+  - Day 33 的负例隔离能力
+
+### 下一步
+后续优先进入：
+1. Day 34 功能性指标整理
+2. 汇总成功率 / 拦截率 / 进入 PIR 比例
+3. 保持 Day 32 与 Day 33 的主链与负例能力都不回退

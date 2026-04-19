@@ -813,6 +813,41 @@
 - [ ] Day 33：验证非法请求不会进入 PIR
 - [ ] 进一步观察 auditor 后台投递日志是否稳定
 - [ ] 视需要统一 `result_string / recovered_val / mapped_index` 的最终响应字段命名
+## Day 33：非法请求不进入 PIR
+- [x] 在 verifier 中新增轻量级内存 metrics：
+  - [x] `total_requests`
+  - [x] `blocked_before_pir`
+  - [x] `pir_invoked`
+- [x] 新增 `/api/v1/verifier/metrics` 接口
+- [x] 在 verifier 主链中加入 PIR 前后探针日志：
+  - [x] `[PIR_START]`
+  - [x] `[PIR_END]`
+- [x] 明确 `pir_invoked` 语义：
+  - [x] 已穿过前置验证并开始调用底层 PIR 的请求数
+  - [x] 包含执行过程报错的请求
+- [x] 明确 `blocked_before_pir` 语义：
+  - [x] precondition 拦截
+  - [x] crypto verification 拦截
+  - [x] `try_lock` 失败拦截
+- [x] 新增并跑通 `scripts/test_day33_abuse_prevention.py`
+- [x] 完成 Day 33 第一轮负例隔离验证：
+  - [x] 1 个合法请求成功进入 PIR
+  - [x] 1 个篡改 binding 请求被挡下
+  - [x] 1 个缺失 ticket 请求被挡下
+  - [x] 1 个 replay 请求被挡下
+- [x] 最终 metrics 对账通过：
+  - [x] `added_total == 4`
+  - [x] `added_blocked == 3`
+  - [x] `added_pir == 1`
+
+### Day 33 结论
+- [x] 非法请求不会触发 PIR 计算
+- [x] Day 33 验收通过
+
+### Day 33 后续衔接
+- [ ] Day 34：整理功能性指标
+- [ ] 决定是否把 verifier 内存 metrics 继续保留为调试接口
+- [ ] 视需要把 `[PIR_START]/[PIR_END]` 探针日志格式进一步统一
 
 ## 当前项目状态总结
 - Issuer blind-sign 已跑通
