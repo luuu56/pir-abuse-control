@@ -1915,3 +1915,94 @@ PIR Server 日志显示：
 1. 失败原因进一步分类统计
 2. 功能性指标脚本与主链/攻击脚本的职责边界整理
 3. 决定哪些指标保留为常驻调试接口，哪些只保留在实验脚本中
+## 2026-04-19
+
+## Day 35：缓冲 / 修复日完成
+
+### 背景
+Day 34 已经整理出第一轮功能性指标，当前需要做一次“小修收口”，目标不是重构主架构，而是：
+1. 修复 PIR 集成细节问题
+2. 清理 wrapper
+3. 稳定主链路
+
+本轮严格遵守既有固定前提：
+- 主线仍为 `blind ticket -> admission -> binding -> verifier -> PIR -> audit`
+- blind signature 第一版仍为 RSA blind signature
+- PIR 后端仍保持独立进程 / 微服务集成
+- 状态机仍为 `UNUSED / PENDING / CONSUMED / FAILED`
+- 不扩大 eBPF 职责
+- 保持统一 YAML 配置与统一 logging
+
+### 完成内容
+1. **PIRResponse 对外返回契约强类型化**
+   - 在 `common/models.py` 中新增：
+     - `PIRResultPayload`
+   - 将：
+     - `PIRResponse.data: Optional[Any]`
+     收口为：
+     - `PIRResponse.data: Optional[PIRResultPayload]`
+
+2. **Verifier 成功路径收口**
+   - 在 `services/verifier/main.py` 中引入 `PIRResultPayload`
+   - 成功路径不再返回普通 dict
+   - 改为显式组装：
+     - `PIRResultPayload(result_string, mapped_index, recovered_val)`
+
+3. **Wrapper 类型注解收缩**
+   - 将 `call_pir_server()` 的返回类型从宽松 `Any` 收口为：
+     - `tuple[bool, str, Optional[int], Optional[int]]`
+   - 保持函数内部逻辑不扩面，不新加额外包装层
+
+4. **成功分支增加防御性检查**
+   - 新增对以下异常情况的保护：
+     - `success=True`
+     - 但 `mapped_index is None` 或 `recovered_val is None`
+   - 当前处理策略：
+     - 记录错误日志
+     - 票据转为 `FAILED`
+     - reason 收口为：
+       - `PIR execution failed, ticket burned. Error: malformed PIR response`
+   - 这样可以避免“表面成功、结果畸形”的桥接返回污染成功路径
+
+5. **保持 Auditor 契约不扩面**
+   - 明确 Day 35 不提前把 `mapped_index` 塞入 `AuditRecord`
+   - verifier 投递 auditor 的 payload 继续剔除 `mapped_index`
+   - 避免 verifier / auditor 模型错位
+
+### 回归验证
+执行：
+```bash
+python scripts/test_day34_functional_metrics.py
+```
+结果：
+
+初始 metrics 为 0，说明本次统计未受旧值污染
+最终 metrics：
+total_requests = 10
+pir_invoked = 5
+blocked_before_pir = 5
+功能性指标结果保持：
+Normal Request Success Rate = 100.00% (5/5)
+Replay Interception Rate = 100.00% (3/3)
+Binding Interception Rate = 100.00% (1/1)
+Signature Interception Rate = 100.00% (1/1)
+Expected PIR Invocations = 5
+Actual PIR Engine Invoked = 5
+PIR Entry Proportion = 50.00%
+关键判断
+Day 35 本轮修改属于“小修收口”，没有推翻既有结构
+强类型化与成功分支防御检查没有破坏 Day 34 功能性指标脚本
+当前可以确认：
+该进 PIR 的请求仍能进入 PIR
+不该进 PIR 的请求仍被挡在前面
+说明 verifier / pir_server / metrics 三者口径仍保持一致
+当前备注
+PIR Entry Proportion = 50% 的含义仍应在报告中注明：
+这是固定 10 个样本（5 合法 + 5 非法）下的进入比例
+不是一般流量分布结论
+当前尚未单独补 malformed PIR response 的定向故障注入脚本
+如后续需要，可补一条专门回归“success=true 但字段缺失”的测试
+结论
+Day 35 已完成
+当前已完成“修复 PIR 集成问题、清理 wrapper、稳定主链路”的目标
+主链继续保持稳定，可进入下一阶段

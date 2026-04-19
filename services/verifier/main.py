@@ -5,7 +5,7 @@ import requests
 import time
 import httpx
 import hmac
-from typing import Any
+from typing import Any, Optional
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, BackgroundTasks
@@ -16,7 +16,8 @@ sys.path.append(str(root_path))
 
 from common.config import load_config
 from common.logging_utils import setup_logger
-from common.models import RequestInstance, PIRResponse, Decision, TicketState
+# 引入了 PIRResultPayload 强类型模型
+from common.models import RequestInstance, PIRResponse, Decision, TicketState, PIRResultPayload
 from services.verifier.crypto import crypto_manager
 from services.verifier.state_manager import get_state_manager
 from common.crypto_utils import (
@@ -112,8 +113,8 @@ async def query_ticket_state(sn: str):
     return {"sn": sn, "ticket_state": state.value}
 
 
-# 修复 1：类型提示对齐 4 个返回值
-async def call_pir_server(query_payload: str) -> tuple[bool, Any, Any, Any]:
+# 修复 4：收紧类型注解，告别 Any。桥接层契约锁定。
+async def call_pir_server(query_payload: str) -> tuple[bool, str, Optional[int], Optional[int]]:
     """
     Day 32 升级：从 PIR Server 获取结构化结果并透传
     """
@@ -246,23 +247,33 @@ async def execute_query(req: RequestInstance, background_tasks: BackgroundTasks)
     logger.info(f"🏁 [PIR_END] Req:{req.request_id[:8]} | SimplePIR backend execution finished. Success: {success}")
     # ==============================================================================
 
-    # 修复 2：补充 reason 定义，供后续组装
+    # Step 5: 状态收敛与强类型数据组装 (Day 35 最终防御版)
     if success:
-        get_state_manager().mark_consumed(req.ticket.sn, epoch_id=req.ticket.epoch_id)
-        decision = Decision.SUCCESS
-        reason = "PIR execution completed"
-        final_data = {
-            "result_string": payload_or_error,
-            "recovered_val": recovered_val,
-            "mapped_index": mapped_index
-        }
+        # 防御性检查：确保成功时索引字段不为 None，消灭类型缝隙
+        if mapped_index is None or recovered_val is None:
+            get_state_manager().mark_failed(req.ticket.sn, epoch_id=req.ticket.epoch_id)
+            decision = Decision.REJECTED
+            reason = "PIR execution failed, ticket burned. Error: malformed PIR response"
+            final_data = None
+            logger.error(f"PIR Protocol Breach: Success returned but indices are None for SN: {req.ticket.sn[:8]}")
+        else:
+            get_state_manager().mark_consumed(req.ticket.sn, epoch_id=req.ticket.epoch_id)
+            decision = Decision.SUCCESS
+            reason = "PIR execution completed"
+
+            # 此时可以 100% 安全地进行强类型转换
+            final_data = PIRResultPayload(
+                result_string=payload_or_error,
+                mapped_index=mapped_index,
+                recovered_val=recovered_val
+            )
     else:
         get_state_manager().mark_failed(req.ticket.sn, epoch_id=req.ticket.epoch_id)
         decision = Decision.REJECTED
         reason = f"PIR execution failed, ticket burned. Error: {payload_or_error}"
         final_data = None
 
-    # 修复 3：防 Auditor 模型崩溃，剔除 mapped_index，补齐完整所需字段
+    # Step 6: 审计投递 (严守现状，不碰 mapped_index，避免 Auditor 模型爆炸)
     audit_payload = {
         "request_id": req.request_id,
         "sn": req.ticket.sn,
@@ -275,7 +286,6 @@ async def execute_query(req: RequestInstance, background_tasks: BackgroundTasks)
         "prev_hash": "stub",
         "entry_mac": "stub"
     }
-    # 修复 4：正确调用 dispatch_audit_log
     background_tasks.add_task(dispatch_audit_log, audit_payload)
 
     return PIRResponse(

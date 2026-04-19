@@ -40,7 +40,22 @@ class RequestInstance(BaseModel):
     witness: Optional[RequestContext] = None
 
 # --- 审计与响应模型 ---
+# [Day 35] 对外接口的 PIR 结果强类型载荷
+class PIRResultPayload(BaseModel):
+    result_string: str
+    mapped_index: int
+    recovered_val: int
 
+
+class PIRResponse(BaseModel):
+    request_id: str
+    decision: Decision
+    ticket_state: Optional[TicketState] = None
+    reason: Optional[str] = None
+    data: Optional[PIRResultPayload] = None  # 告别 Optional[Any]
+
+
+# AuditRecord 保持原样，绝不提前塞 mapped_index
 class AuditRecord(BaseModel):
     """审计分录 Entry"""
     request_id: str = Field(..., description="Associated request tracking ID")
@@ -53,13 +68,6 @@ class AuditRecord(BaseModel):
     timestamp_ms: int
     prev_hash: str
     entry_mac: str
-
-class PIRResponse(BaseModel):
-    request_id: str
-    decision: Decision
-    ticket_state: Optional[TicketState] = None
-    reason: Optional[str] = None
-    data: Optional[Any] = None  # <--- 这里的 Any 是关键！
 
 # --- 准入原语相关模型 (Day 16 新增/修改) ---
 

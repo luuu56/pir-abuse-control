@@ -875,6 +875,44 @@
 - [x] 第一轮功能性指标整理完成
 - [x] 当前系统在固定配比样本下表现稳定
 - [x] 合法请求与非法请求的分流结果符合预期
+### Day 35：缓冲 / 修复日
+- [x] 收口 `common.models.PIRResponse.data` 强类型契约：
+  - [x] 新增 `PIRResultPayload`
+  - [x] 将 `data: Optional[Any]` 改为 `data: Optional[PIRResultPayload]`
+- [x] 收口 verifier 成功返回的数据组装：
+  - [x] 成功路径使用 `PIRResultPayload(...)` 实例化
+  - [x] 保持 `reason` 文案不变，避免旧断言漂移
+- [x] 收缩 `call_pir_server()` 类型注解：
+  - [x] 从宽松 `Any` 收口为 `tuple[bool, str, Optional[int], Optional[int]]`
+- [x] 补充成功分支防御性检查：
+  - [x] 若 `success=True` 但 `mapped_index/recovered_val is None`，则按 malformed PIR response 处理
+  - [x] 状态流转改为 `PENDING -> FAILED`
+  - [x] 保持票据烧毁语义一致
+- [x] 保持 Auditor 契约不扩面：
+  - [x] `AuditRecord` 暂不增加 `mapped_index`
+  - [x] audit payload 继续剔除 `mapped_index`
+- [x] 运行 Day 34 功能性回归脚本：
+  - [x] `python scripts/test_day34_functional_metrics.py`
+
+### Day 35 验收结果
+- [x] Day 34 功能性指标脚本在 Day 35 收口后仍通过
+- [x] 正常请求成功率：`100% (5/5)`
+- [x] replay 拦截率：`100% (3/3)`
+- [x] binding 错误拦截率：`100% (1/1)`
+- [x] 伪造签名拦截率：`100% (1/1)`
+- [x] 预期进入 PIR 次数：`5`
+- [x] 实际进入 PIR 次数：`5`
+- [x] 固定样本配比下 PIR 进入比例：`50%`
+
+### Day 35 结论
+- [x] 本轮属于“小修收口”，未破坏既有主链
+- [x] PIR bridge / verifier / metrics 口径保持一致
+- [x] Day 35 已完成“修复 PIR 集成问题、清理 wrapper、稳定主链路”的目标
+
+### Day 35 小收尾
+- [ ] 视需要在报告或结果说明中注明：`PIR Entry Proportion = 50%` 仅表示固定 10 个样本配比下的结果，不代表一般流量分布
+- [ ] 视需要补一条 malformed PIR response 的定向测试脚本或故障注入用例
+- [ ] 视需要将 Day 35 的强类型契约同步到相关设计文档
 
 ## 当前项目状态总结
 - Issuer blind-sign 已跑通

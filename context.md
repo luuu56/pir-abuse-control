@@ -33,6 +33,11 @@
 - Day 27：最小争议验证闭环已通过验收
 - Day 28：verifier 阶段重构已最终收口
 - Day 29：真实主候选 PIR 正式接入并通过确定性验收
+- Day 31：请求实例与 PIR 输入对齐第一轮收口完成
+- Day 32：主链 happy path 已可返回真实 PIR 结果
+- Day 33：非法请求不进入 PIR 的隔离验证已通过
+- Day 34：第一轮功能性指标已可自动化产出并对账
+- Day 35：缓冲 / 修复日收口完成，PIR 响应类型与 verifier 防御性检查已稳定落地
 
 当前已完成：
 
@@ -70,6 +75,12 @@
   - `Query`
   - `Answer`
   - `Recover`
+- Day 31 `q -> pir_index` 映射契约与 Python/Go 双向结构化协议
+- Day 32 Verifier 成功分支透传结构化 PIR 结果
+- Day 33 verifier 轻量 metrics 与 PIR 探针日志
+- Day 34 功能性指标脚本与固定流量体检报表
+- Day 35 `PIRResponse.data` 强类型收口为 `PIRResultPayload`
+- Day 35 verifier 成功分支 malformed PIR response 防御性检查
 
 当前 Day 12 生命周期在跨服务模式下已再次通过 4 条关键验收：
 
@@ -291,7 +302,109 @@
    - Go wrapper 边界验收（正常成功、进程崩溃隔离、协议脏数据拦截、`status=error` 逻辑失败）
    - 真实主候选确定性验收（Python 请求成功穿透 `pir_server -> subprocess -> Go wrapper`，真实 SimplePIR 核心被成功调用，固定索引 `42` 成功恢复固定真值 `4242`）
 
-因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、主链核心场景已完成本周联调区分验证、Redis 状态表已完成 Day 22 收口、Day 23 原子核销并发验收通过、Day 24 判定与消费语义一致性已落地、Day 25–27 审计留痕/追溯/争议闭环已形成、Day 28 verifier 内部结构已稳定收口、Day 29 Python 控制层已可实际驱动真实主候选 SimplePIR 计算、并保持独立进程 / 微服务边界不变”的阶段。
+当前 Day 31 已完成“请求实例与 PIR 输入对齐”的第一轮收口：
+
+1. 当前 Python `pir_server` 已定义第一版映射规则：
+   - `pir_index = SHA256(query_payload) % DB_NUM_ENTRIES`
+2. 当前固定：
+   - `DB_NUM_ENTRIES = 1024`
+   - 且必须与 Go 侧 `NUM_ENTRIES = 1024` 严格一致
+3. 当前 Python -> Go 输入 JSON 包括：
+   - `request_id`
+   - `query_payload`
+   - `pir_input`
+   - `engine_request_type`
+4. 当前 Go -> Python 输出 JSON 包括：
+   - `status`
+   - `result`
+   - `recovered_val`
+   - `error_type`
+   - `error_message`
+   - `engine_meta`
+5. 当前 Go wrapper 已采用动态可预测测试数据库：
+   - `vals[i] = i * 101`
+6. 当前动态映射验收已通过：
+   - `query_apple`
+   - `query_banana`
+   - `user_12345`
+
+当前 Day 32 已完成主链路 Happy Path 联调：
+
+1. Verifier 不再只把 PIR 执行结果当作成功/失败布尔值处理
+2. `call_pir_server()` 已返回四元组：
+   - `success`
+   - `payload_or_error`
+   - `mapped_index`
+   - `recovered_val`
+3. 在 PIR 成功时：
+   - `ticket_state = CONSUMED`
+   - `decision = SUCCESS`
+   - `reason = "PIR execution completed"`
+   - `PIRResponse.data` 携带结构化 PIR 结果
+4. 当前实际通过的结构化结果示例：
+   - `mapped_index = 86`
+   - `recovered_val = 8686`
+5. 且与 Python 侧本地预测：
+   - `expected_index = 86`
+   - `expected_val = 8686`
+   一致
+
+当前 Day 33 已完成“非法请求不进入 PIR”的第一轮隔离验证：
+
+1. verifier 已新增轻量级内存 metrics：
+   - `total_requests`
+   - `blocked_before_pir`
+   - `pir_invoked`
+2. 已暴露：
+   - `/api/v1/verifier/metrics`
+3. 当前已增加 PIR 探针日志：
+   - `[PIR_START]`
+   - `[PIR_END]`
+4. Day 33 攻击脚本结果已确认：
+   - 合法请求：成功进入 PIR 并返回真实结果
+   - 篡改 binding 请求：被挡下
+   - 缺失 ticket 请求：被挡下
+   - replay 请求：被挡下
+5. 最终对账结果为：
+   - `Total Requests Fired : 4`
+   - `Business Blocked     : 3`
+   - `Actual PIR Invoked   : 1`
+
+当前 Day 34 已完成第一轮功能性指标整理：
+
+1. 使用 `scripts/test_day34_functional_metrics.py` 发射固定 10 个请求：
+   - 5 个正常请求
+   - 3 个 replay 攻击
+   - 1 个 binding 篡改请求
+   - 1 个伪造签名请求
+2. 当前指标结果为：
+   - `Normal Request Success Rate: 100.00% (5/5)`
+   - `Replay Interception Rate: 100.00% (3/3)`
+   - `Binding Interception Rate: 100.00% (1/1)`
+   - `Signature Interception Rate: 100.00% (1/1)`
+3. metrics 对账结果为：
+   - `Total Requests Processed = 10`
+   - `Expected PIR Invocations = 5`
+   - `Actual PIR Engine Invoked = 5`
+   - `PIR Entry Proportion = 50.00%`
+
+当前 Day 35 已完成一轮“缓冲 / 修复日”收口：
+
+1. `common.models.PIRResponse.data` 已从宽松类型收口为强类型 `PIRResultPayload`
+2. 但该收口仅作用于 verifier 对外响应层，不改变 `pir_server` 当前桥接层 JSON 契约
+3. 当前桥接层仍保持：
+   - `pir_server -> verifier` 返回：`data / mapped_index / recovered_val`
+   - `verifier -> client` 对外返回：`PIRResponse.data = PIRResultPayload(result_string, mapped_index, recovered_val)`
+4. Day 35 明确保持 Auditor 契约不扩面：
+   - `AuditRecord` 暂不加入 `mapped_index`
+   - verifier 投递 auditor 的 payload 继续不带 `mapped_index`
+5. verifier 成功分支已增加防御性检查：
+   - 若 `success=True` 但 `mapped_index` 或 `recovered_val` 为空，则按 `malformed PIR response` 处理
+   - 票据状态流转为 `PENDING -> FAILED`
+   - 保持失败烧毁语义一致
+6. Day 35 后已再次运行 `scripts/test_day34_functional_metrics.py`，结果未回退，说明本轮收口未破坏既有主链与功能性指标口径
+
+因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、主链核心场景已完成本周联调区分验证、Redis 状态表已完成 Day 22 收口、Day 23 原子核销并发验收通过、Day 24 判定与消费语义一致性已落地、Day 25–27 审计留痕/追溯/争议闭环已形成、Day 28 verifier 内部结构已稳定收口、Day 29 Python 控制层已可实际驱动真实主候选 SimplePIR 计算、Day 31–35 已完成请求到真实 PIR 结果的协议对齐、主链 happy path、非法请求 PIR 隔离与第一轮功能性指标闭环”的阶段。
 
 ---
 
@@ -603,10 +716,95 @@
 - `Answer`
 - `Recover`
 
-说明：
+### 16. q -> PIR 输入映射契约（Day 31）
+当前 Python `pir_server` 已定义第一版映射规则：
 
-- 当前只是“真实主候选 PIR 已正式接入并可被 Python 控制层驱动”
-- 还未完成 `q -> PIR query` 正式映射、最终 I/O 协议收口与 DB / hint 生命周期优化
+- `pir_index = SHA256(query_payload) % DB_NUM_ENTRIES`
+
+当前固定：
+
+- `DB_NUM_ENTRIES = 1024`
+
+并要求与 Go 侧：
+
+- `NUM_ENTRIES = 1024`
+
+保持严格一致。
+
+当前 Python -> Go 输入协议包括：
+
+- `request_id`
+- `query_payload`
+- `pir_input`
+- `engine_request_type`
+
+其中：
+
+- `pir_input` 当前为字符串化后的 `pir_index`
+
+当前 Go -> Python 输出协议包括：
+
+- `status`
+- `result`
+- `recovered_val`
+- `error_type`
+- `error_message`
+- `engine_meta`
+
+其中：
+
+- `recovered_val` 已作为结构化字段返回，不再只藏在结果字符串中
+
+### 17. 真实 PIR 结构化结果契约（Day 32 / Day 35）
+当前 verifier 不再只把 PIR 执行结果视为成功/失败布尔值，而是支持透传结构化 PIR 数据。
+
+当前 `call_pir_server()` 返回：
+
+- `success`
+- `payload_or_error`
+- `mapped_index`
+- `recovered_val`
+
+当前 verifier 成功返回时：
+
+- `ticket_state = CONSUMED`
+- `decision = SUCCESS`
+- `reason = "PIR execution completed"`
+- `PIRResponse.data = PIRResultPayload(result_string, mapped_index, recovered_val)`
+
+Day 35 进一步明确：
+
+- `common.models.PIRResponse.data` 已从宽松类型收口为强类型 `PIRResultPayload`
+- 该收口仅作用于 verifier 对外响应层
+- 不改变 `pir_server` 当前桥接层 JSON 契约
+- 若 `success=True` 但 `mapped_index` 或 `recovered_val` 为空，则按 `malformed PIR response` 处理，并流转为 `PENDING -> FAILED`
+
+### 18. 非法请求 PIR 前隔离契约（Day 33 / Day 34）
+当前 verifier 已新增轻量级内存 metrics：
+
+- `total_requests`
+- `blocked_before_pir`
+- `pir_invoked`
+
+并暴露：
+
+- `/api/v1/verifier/metrics`
+
+当前口径如下：
+
+- `total_requests`：成功进入 verifier 业务执行函数的请求数
+- `blocked_before_pir`：在进入 `call_pir_server()` 前被挡下的请求数
+- `pir_invoked`：真正开始调用底层 PIR 的请求数
+
+当前 verifier 已在调用真实 PIR 前后增加探针日志：
+
+- `[PIR_START]`
+- `[PIR_END]`
+
+Day 34 当前指标口径说明：
+
+- `pir_invoked` 表示已穿过 verifier 前置验证并真正开始调用底层 PIR 的请求数
+- `PIR Entry Proportion` 表示总请求中实际进入 PIR 的比例
 
 ---
 
@@ -629,6 +827,7 @@
   - `CONSUMED`
   - `FAILED`
 - 主链完成后异步投递审计记录，不阻塞客户端主返回
+- 在成功分支对结构化 PIR 返回执行防御性完整性检查
 
 当前额外已具备：
 
@@ -636,6 +835,9 @@
   - 用于只读查询当前票据逻辑状态
   - 要求 `sn` 为 64-char hex
   - Redis miss 返回 `UNUSED`
+- `/api/v1/verifier/metrics`：
+  - 用于单进程调试与 Day 33 / Day 34 验收
+  - 服务重启后计数清零
 
 当前拒绝语义已明确：
 
@@ -648,6 +850,7 @@
 - `Missing Binding Tag`：缺失 binding_tag 时拒绝
 - `Binding Consistency Check Failed`：`q / b / w` 任一被篡改时拒绝
 - `Invalid Binding Material`：binding 材料异常时业务拒绝
+- `malformed PIR response`：PIR 成功分支结构化字段缺失时按失败烧毁处理
 - 其他前置验证失败：请求被拒绝，但票据状态保持 `UNUSED`
 
 当前审计语义：
@@ -655,6 +858,8 @@
 - Verifier 已完成异步审计投递分层
 - Auditor 已具备落账、最小追溯与最小一致性核查能力
 - 当前已达到原型阶段“可留痕、可最小追溯、可最小对账、可争议解释”的水平
+- 当前明确保持 Auditor 契约不扩面：
+  - `AuditRecord` 暂不加入 `mapped_index`
 
 当前 blind-sign 语义：
 
@@ -666,7 +871,7 @@
 
 - Auditor 更强威胁模型下的密钥托管与外部锚定
 - 审计多事件追踪模式
-- `q -> PIR query` 的正式映射
+- `q -> PIR query` 的正式映射进一步收口
 - Python 与独立 PIR 后端之间的最终输入输出协议
 - 输出解析与错误返回路径标准化
 - DB / hint 生命周期与性能优化
@@ -694,7 +899,7 @@
 当前这些字段的状态如下：
 
 - `request_id`：用于请求跟踪
-- `query_payload`：当前已进入 binding 生成与 verifier 侧重算校验
+- `query_payload`：当前已进入 binding 生成与 verifier 侧重算校验，并参与 `q -> pir_index` 映射
 - `ticket`：允许为空以支持无票据业务场景联调；Verifier 必须显式检查
 - `binding_tag`：允许为空以支持业务层场景化测试；Verifier 必须显式检查
 - `witness`：允许为空以支持业务层场景化测试；Verifier 必须显式检查
@@ -734,6 +939,18 @@
 - `PENDING` 为原子占位后的处理中状态
 - `CONSUMED / FAILED` 为 PIR 成功 / 失败后的终态
 - 对外查询与内部状态机语义统一使用同一枚举
+
+### PIRResultPayload
+当前 Day 35 已明确对外结构化响应载荷：
+
+- `result_string`
+- `mapped_index`
+- `recovered_val`
+
+说明：
+
+- 仅用于 verifier -> client 对外响应层
+- 不要求 auditor 当前同步扩面
 
 ---
 
@@ -793,6 +1010,27 @@
    - Go wrapper 边界验收通过
    - 真实主候选确定性验收通过
    - 固定索引 `42` 成功恢复固定真值 `4242`
+26. Day 31 动态映射验收已通过：
+   - `query_apple`
+   - `query_banana`
+   - `user_12345`
+27. Day 32 主链 happy path 已通过：
+   - verifier 成功返回结构化 PIR 结果
+   - `mapped_index` 与 `recovered_val` 与本地预测一致
+28. Day 33 非法请求 PIR 前隔离验收已通过：
+   - `Total Requests Fired : 4`
+   - `Business Blocked     : 3`
+   - `Actual PIR Invoked   : 1`
+29. Day 34 功能性指标脚本已通过：
+   - 正常成功率 `100%`
+   - replay 拦截率 `100%`
+   - binding 拦截率 `100%`
+   - signature 伪造拦截率 `100%`
+   - `PIR Entry Proportion = 50%`
+30. Day 35 缓冲 / 修复日收口已通过：
+   - `PIRResultPayload` 强类型收口完成
+   - malformed PIR response 防御性检查已生效
+   - `scripts/test_day34_functional_metrics.py` 结果未回退
 
 ### 已有脚本 / 测试
 - `scripts/test_ticket_flow.sh`
@@ -823,6 +1061,14 @@
   - 验证 Day 26 Auditor trace 与一致性查询
 - `scripts/test_day27_dispute_resolution.py`
   - 验证 Day 27 最小争议验证闭环
+- `scripts/test_day31_dynamic_mapping.py`
+  - 验证 Day 31 `q -> pir_index` 动态映射与 `recovered_val`
+- `scripts/test_day32_full_pipeline.py`
+  - 验证 Day 32 主链 happy path 返回真实 PIR 结果
+- `scripts/test_day33_abuse_prevention.py`
+  - 验证 Day 33 非法请求不进入 PIR
+- `scripts/test_day34_functional_metrics.py`
+  - 验证 Day 34 第一轮功能性指标与 metrics 对账
 
 ---
 
@@ -831,8 +1077,8 @@
 ### 下一阶段：端到端回归脚本 / 周回归套件
 目标：
 
-- 在 Day 21 本周联调、Day 22 状态表收口、Day 23 原子核销并发验收、Day 24 判定-消费语义验收、Day 25–27 审计闭环验收、Day 28 verifier 收口回归、Day 29 真实主候选 PIR 接入验收的基础上，将核心场景沉淀为可重复执行的周联调脚本 / 回归脚本
-- 避免后续在真实 PIR 后端收口或更强审计增强阶段把当前主链路打坏
+- 在 Day 21 本周联调、Day 22 状态表收口、Day 23 原子核销并发验收、Day 24 判定-消费语义验收、Day 25–27 审计闭环验收、Day 28 verifier 收口回归、Day 29 真实主候选 PIR 接入验收、Day 31–35 协议/主链/指标收口的基础上，将核心场景沉淀为可重复执行的周联调脚本 / 回归脚本
+- 避免后续在真实 PIR 后端进一步收口或更强审计增强阶段把当前主链路打坏
 
 建议覆盖场景：
 
@@ -844,7 +1090,10 @@
 6. `PENDING / CONSUMED / FAILED` replay 请求
 7. Auditor trace / 最小一致性查询
 8. 审计账本完整性校验
-9. 真实主候选 PIR 确定性基线（索引 `42` -> 真值 `4242`）
+9. 真实主候选 PIR 确定性基线
+10. 动态映射与结构化 PIR 结果返回
+11. 非法请求 PIR 前隔离
+12. 功能性指标与 metrics 对账
 
 需要完成：
 
@@ -856,7 +1105,9 @@
 6. 验证正常请求仍可成功进入 PIR Server 并返回 `SUCCESS`
 7. 验证 Auditor 侧最小追溯与一致性查询保持可用
 8. 验证真实主候选 PIR 路径保持确定性通过
-9. 将以上场景沉淀为一份周联调脚本 / 回归脚本
+9. 验证动态映射结果与 `recovered_val` 保持一致
+10. 验证非法请求不会进入 PIR
+11. 将以上场景沉淀为一份周联调脚本 / 回归脚本
 
 ### 再下一阶段：更强审计与部署增强（后续）
 目标：
@@ -909,6 +1160,8 @@
 - Day 26 当前保持按 `SN` 单条追溯的最小 trace 语义
 - Day 28 当前保持 verifier 三层拆分结构与既有外部 API 契约不漂移
 - Day 29 当前保持 Python 控制层通过 subprocess / JSON bridge 驱动真实主候选 PIR，不引入进程内 FFI 硬绑定
+- Day 31 当前保持 `pir_index = SHA256(q) % 1024` 作为第一版映射契约
+- Day 35 当前保持 `PIRResponse.data` 强类型收口，但不扩面 Auditor 契约
 
 ---
 
@@ -936,6 +1189,11 @@
 - **Day 27 最小争议验证闭环已通过验收**
 - **Day 28 verifier 阶段重构已最终收口**
 - **Day 29 真实主候选 PIR 正式接入**
+- **Day 31 请求实例与 PIR 输入对齐第一轮收口**
+- **Day 32 主链 happy path 已返回真实 PIR 结果**
+- **Day 33 非法请求 PIR 前隔离已通过验收**
+- **Day 34 第一轮功能性指标已可对账**
+- **Day 35 缓冲 / 修复日收口完成**
 
 并已确认：
 
@@ -956,3 +1214,8 @@
 - Day 27 最小争议验证闭环通过
 - Day 28 verifier 最终重构回归通过
 - Day 29 真实主候选 PIR 接入与确定性基线通过
+- Day 31 动态映射协议通过
+- Day 32 主链 happy path 返回真实 PIR 结果通过
+- Day 33 非法请求 PIR 前隔离通过
+- Day 34 功能性指标与 metrics 对账通过
+- Day 35 缓冲 / 修复日收口未破坏既有主链与指标口径
