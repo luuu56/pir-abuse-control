@@ -567,6 +567,39 @@
 - [ ] 视需要补一个按 `sn` 或 `sn + c_q` 的最小查询接口
 - [ ] 视需要扩展为对更多拒绝分支也留审计记录
 - [ ] 后续如进入更强威胁模型，再考虑密钥托管与多进程一致性
+### Day 26：Auditor 查询接口
+- [x] 在 `services/auditor/main.py` 中新增：
+  - [x] `GET /api/v1/auditor/trace/{sn}`
+- [x] 支持按 `SN` 查询单条审计记录
+- [x] 支持按 `SN + expected_cq` 做一致性判定
+- [x] 返回最小链上下文字段：
+  - [x] `prev_hash`
+  - [x] `entry_mac`
+- [x] 为 `expected_cq` 增加 64-char hex 格式校验
+- [x] 明确当前接口返回的是“当前记录的链上下文”，不是前后邻居完整记录
+- [x] 明确当前原型阶段采用“单票据对应单条主审计记录，找到即停”的假设
+- [x] 新增验收脚本：
+  - [x] `scripts/test_day26_auditor_trace.py`
+- [x] 验收脚本中对前置交易增加：
+  - [x] `timeout`
+  - [x] `raise_for_status()`
+  - [x] `decision == SUCCESS` 断言
+
+### Day 26 验收结果
+- [x] 按 `SN` 查询成功
+- [x] 能返回 `ledger_line`
+- [x] 能返回 `prev_hash / entry_mac`
+- [x] 按 `SN + 正确 c_q` 查询时，一致性判定为 `True`
+- [x] 按 `SN + 伪造 c_q` 查询时，一致性判定为 `False`
+
+### Day 26 结论
+- [x] Day 26 的 Auditor 查询接口已落地
+- [x] Day 26 的“Auditor 能追溯单条请求”验收已通过
+
+### Day 26 小收尾
+- [ ] 视需要补 `SN` 的 64-char hex 格式校验
+- [ ] 视需要将“找到即停”扩展为多事件记录列表返回
+- [ ] 继续推进 Day 27：最小争议验证闭环
 
 ## 当前项目状态总结
 - Issuer blind-sign 已跑通

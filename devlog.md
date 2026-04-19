@@ -1268,3 +1268,82 @@ PIR Server 日志显示：
   1. 按 `SN` 查询
   2. 按 `SN + c_q` 做一致性查看
   3. 能读出前后链字段，支撑最小追溯
+## 2026-04-19
+
+## Day 26：Auditor 查询接口验收完成
+
+### 完成内容
+1. **Auditor 单条追溯接口落地**
+   - 在 `services/auditor/main.py` 中新增：
+     - `GET /api/v1/auditor/trace/{sn}`
+   - 当前用于对单条审计记录做最小追溯
+
+2. **按 SN 查询能力**
+   - 可根据票据 `SN` 在 JSONL 账本中定位对应审计记录
+   - 返回：
+     - `sn`
+     - `ledger_line`
+     - `record`
+
+3. **链上下文字段回显**
+   - 接口当前显式返回：
+     - `prev_hash`
+     - `entry_mac`
+   - 用于最小链上下文查看与后续完整性校验
+
+4. **一致性查询能力**
+   - 当传入 `expected_cq` 时：
+     - 将其与账本中的 `query_commitment` 比较
+   - 返回：
+     - `cq_consistent = true / false`
+
+5. **输入与验收收口**
+   - 为 `expected_cq` 增加 64-char hex 格式校验
+   - 验收脚本前置交易增加：
+     - `timeout`
+     - `raise_for_status()`
+     - `decision == SUCCESS` 断言
+   - 明确当前返回的是“当前记录的链上下文”，不是前后邻居完整记录
+
+### 运行结果
+
+#### Day 26 Auditor 追溯与一致性接口验收
+执行：
+- `python scripts/test_day26_auditor_trace.py`
+
+结果：
+1. Client 成功发起一笔真实交易
+2. Auditor 可按 `SN` 追溯到对应账本记录
+3. 接口返回：
+   - `ledger_line`
+   - `prev_hash`
+   - `entry_mac`
+4. 使用正确 `c_q` 查询时：
+   - 一致性判定成功
+5. 使用伪造 `c_q` 查询时：
+   - 一致性判定失败
+
+关键输出：
+- `✅ 成功追溯！位于账本第 3 行`
+- `✅ 一致性判定成功：账本记录的 c_q 与预期完全匹配`
+- `✅ 一致性拦截成功：成功识破事后伪造的载荷承诺！`
+
+### 关键结论
+- Day 26 的 Auditor 查询接口已落地
+- Day 26 的“Auditor 能追溯单条请求”验收已通过
+- 当前审计系统已具备：
+  - 最小追溯能力
+  - 最小一致性核查能力
+  - 最小链上下文读取能力
+
+### 当前限制 / 备注
+- 当前接口默认一张票据只对应一条主审计记录，按 `SN` 找到即停
+- 当前返回的是链上下文字段，不是完整前后邻居记录
+- shell 中 `deactivate` 的 CRLF / Anaconda 残留问题不影响本轮 Day 26 验收结果，应单独处理
+
+### 下一步建议
+- 进入 Day 27：最小争议验证闭环
+- 重点：
+  1. 被 drop 的请求能解释原因
+  2. 进入 `PENDING` 的请求能查到处理中痕迹
+  3. `CONSUMED / FAILED / replay` 能区分不同原因

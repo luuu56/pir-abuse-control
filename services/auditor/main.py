@@ -4,9 +4,10 @@ import json
 import hmac
 import hashlib
 import threading
+from typing import Optional
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 import uvicorn
 
 root_path = Path(__file__).resolve().parent.parent.parent
@@ -32,7 +33,6 @@ def _initialize_ledger_state():
     global current_prev_hash
     if LEDGER_PATH.exists():
         with open(LEDGER_PATH, "r", encoding="utf-8") as f:
-            # 必补 2: 过滤掉文件末尾可能的空行，只取真正有内容的行
             valid_lines = [line.strip() for line in f if line.strip()]
             if valid_lines:
                 try:
@@ -43,7 +43,6 @@ def _initialize_ledger_state():
                     logger.error(f"Failed to parse last ledger entry: {e}")
 
 
-# 必补 1: 将初始化放入 FastAPI 官方推荐的 lifespan 生命周期中
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _initialize_ledger_state()
@@ -81,6 +80,64 @@ async def receive_audit_report(record: AuditRecord):
     return {"status": "recorded"}
 
 
+@app.get("/api/v1/auditor/trace/{sn}")
+async def trace_audit_record(sn: str, expected_cq: Optional[str] = None):
+    """
+    Day 26: 审计日志单条追溯接口。
+    显式返回当前记录的链上下文字段（prev_hash / entry_mac），
+    用于最小追溯与后续完整性校验。
+    """
+    sn = sn.lower()
+    is_hex_sn = len(sn) == 64 and all(c in "0123456789abcdef" for c in sn)
+    if not is_hex_sn:
+        raise HTTPException(status_code=400, detail="Invalid SN format: must be 64-char hex")
+
+    if expected_cq is not None:
+        cq = expected_cq.lower()
+        is_hex = len(cq) == 64 and all(c in "0123456789abcdef" for c in cq)
+        if not is_hex:
+            raise HTTPException(status_code=400, detail="Invalid expected_cq format: must be 64-char hex")
+        expected_cq = cq
+
+    if not LEDGER_PATH.exists():
+        raise HTTPException(status_code=404, detail="Ledger file not found")
+
+    found_record = None
+    line_number = 0
+
+    with open(LEDGER_PATH, "r", encoding="utf-8") as f:
+        for idx, line in enumerate(f):
+            if not line.strip(): continue
+            try:
+                record = json.loads(line)
+                if record.get("sn") == sn:
+                    found_record = record
+                    line_number = idx + 1
+                    # 当前原型阶段默认一张票据最终只对应一条主审计记录，故找到即停。
+                    # 若后续需要支持多事件追踪，再扩展为返回记录列表。
+                    break
+            except json.JSONDecodeError:
+                continue
+
+    if not found_record:
+        raise HTTPException(status_code=404, detail=f"Audit record for SN {sn} not found")
+
+    response = {
+        "sn": sn,
+        "ledger_line": line_number,
+        "record": found_record,
+        "chain_context": {
+            "prev_hash": found_record.get("prev_hash"),
+            "entry_mac": found_record.get("entry_mac")
+        }
+    }
+
+    if expected_cq is not None:
+        is_consistent = (found_record.get("query_commitment") == expected_cq)
+        response["cq_consistent"] = is_consistent
+
+    return response
+
+
 if __name__ == "__main__":
-    # 不再在此处调用 _initialize_ledger_state()，已全权交由 lifespan 管理
     uvicorn.run(app, host=auditor_cfg.get("host", "127.0.0.1"), port=auditor_cfg.get("port", 8004))
