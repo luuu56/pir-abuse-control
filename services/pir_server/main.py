@@ -1,6 +1,7 @@
 # services/pir_server/main.py
 import sys
 import asyncio
+import hashlib
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -29,33 +30,52 @@ ENGINE_CMD = sub_cfg.get("engine_cmd", ["python", "scripts/mock_external_pir.py"
 ENGINE_TIMEOUT = sub_cfg.get("engine_timeout_sec", 15.0)
 WORKING_DIR = sub_cfg.get("working_dir", "")
 
-app = FastAPI(title="PIR Abuse Control - PIR Server Adapter")
+# [Day 31 契约]：必须与 Go 侧 NUM_ENTRIES 保持绝对一致
+DB_NUM_ENTRIES = 1024
 
+def map_query_to_index(query_payload: str, num_entries: int) -> int:
+    hash_bytes = hashlib.sha256(query_payload.encode('utf-8')).digest()
+    hash_int = int.from_bytes(hash_bytes, byteorder='big')
+    return hash_int % num_entries
+
+app = FastAPI(title="PIR Abuse Control - PIR Server Adapter")
 
 class PIRQueryRequest(BaseModel):
     query_payload: str
-
 
 @app.post("/api/v1/pir/query")
 async def execute_pir_query(req: PIRQueryRequest):
     logger.info(f"Received query [{req.query_payload[:15]}...]. Mode: {ENGINE_MODE}")
 
+    # 联动 1：计算映射
+    pir_index = map_query_to_index(req.query_payload, DB_NUM_ENTRIES)
+
     if ENGINE_MODE == "stub":
         await asyncio.sleep(STUB_LATENCY)
         if req.query_payload == "trigger_failure_test":
             raise HTTPException(status_code=500, detail="Simulated PIR backend crash")
-        return {"data": f"stub_pir_result_for_{req.query_payload[:10]}"}
+        return {
+            "data": f"stub_pir_result_for_{req.query_payload[:10]}",
+            "mapped_index": pir_index,
+            "recovered_val": 0
+        }
 
     elif ENGINE_MODE == "subprocess":
         try:
-            # 接收 result 和 meta
-            result, meta = await call_external_pir_engine(ENGINE_CMD, ENGINE_TIMEOUT, req.query_payload, WORKING_DIR)
+            # 联动 2：传递 pir_index 并接收 3 个返回值
+            result, recovered_val, meta = await call_external_pir_engine(
+                ENGINE_CMD, ENGINE_TIMEOUT, req.query_payload, pir_index, WORKING_DIR
+            )
 
-            # 小修 C: 在这里将 engine_meta 打印到日志中，不浪费宝贵的分析数据
+            # 打印 engine_meta，不浪费宝贵的分析数据
             logger.info(f"External PIR engine executed successfully. Meta: {meta}")
 
-            # 对外仍保持 API 契约不变
-            return {"data": result}
+            # 联动 3：同时返回给上层
+            return {
+                "data": result,
+                "mapped_index": pir_index,
+                "recovered_val": recovered_val
+            }
 
         except EngineTimeoutError as e:
             logger.error(f"[Timeout] {e}")
@@ -75,7 +95,6 @@ async def execute_pir_query(req: PIRQueryRequest):
         except Exception as e:
             logger.error(f"[Unknown Bridge Error] {e}")
             raise HTTPException(status_code=500, detail="Internal Server Error")
-
 
 if __name__ == "__main__":
     uvicorn.run(app, host=pir_cfg.get("host", "127.0.0.1"), port=pir_cfg.get("port", 8003))

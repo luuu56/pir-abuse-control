@@ -1601,3 +1601,92 @@ PIR Server 日志显示：
 2. Python 与独立 PIR 后端之间的输入输出协议最终版
 3. 输出解析与错误返回路径
 4. DB / hint 生命周期与性能优化
+## 2026-04-19
+
+## Day 31：请求实例与 PIR 输入对齐（第一轮收口完成）
+
+### 完成内容
+1. **q -> PIR index 映射落地**
+   - 在 Python `pir_server` 中引入第一版映射函数
+   - 当前规则：
+     - `SHA256(query_payload) % 1024`
+   - 将业务字符串请求正式映射到 Go 侧可消费的整数索引
+
+2. **Python -> Go 输入协议收口**
+   - 当前发送给独立 Go PIR 后端的 JSON 字段为：
+     - `request_id`
+     - `query_payload`
+     - `pir_input`
+     - `engine_request_type`
+   - 其中：
+     - `pir_input` 为字符串形式的 `mapped_index`
+
+3. **Go -> Python 输出协议收口**
+   - Go wrapper 当前输出字段包括：
+     - `status`
+     - `result`
+     - `recovered_val`
+     - `error_type`
+     - `error_message`
+     - `engine_meta`
+   - Python `engine_adapter.py` 当前已支持解析并返回：
+     - `result`
+     - `recovered_val`
+     - `engine_meta`
+
+4. **动态可预测数据库基线替换**
+   - 当前 Go wrapper 已从 Day 29 固定基线：
+     - `vals[42] = 4242`
+   - 升级为 Day 31 动态规则：
+     - `vals[i] = i * 101`
+   - Go 侧新增动态自验：
+     - `expectedVal = queryIndex * 101`
+     - 若恢复值不匹配，则返回 `crypto_error`
+
+5. **上层返回结构增强**
+   - `/api/v1/pir/query` 当前对上层返回：
+     - `data`
+     - `mapped_index`
+     - `recovered_val`
+   - 使 Day 31 验收不再依赖字符串观察，而可基于结构化字段断言
+
+6. **Day 31 动态映射验收脚本通过**
+   - 当前已通过：
+     - `query_apple`
+     - `query_banana`
+     - `user_12345`
+   - 每条测试均验证：
+     1. `mapped_index` 与 Python 本地哈希预测一致
+     2. `recovered_val` 与 `mapped_index * 101` 一致
+
+### 验收结果
+执行：
+- `python scripts/test_day31_dynamic_mapping.py`
+
+结果：
+- `3/3 Passed`
+
+关键输出：
+- `Pass: Index mapped to 447, recovered crypto value 45147`
+- `Pass: Index mapped to 188, recovered crypto value 18988`
+- `Pass: Index mapped to 322, recovered crypto value 32522`
+
+### 关键结论
+- Day 31 第一轮目标已达成：
+  - 请求实例已能驱动真实 PIR 查询
+- 当前系统已从 Day 29 固定索引基线推进到：
+  - `q -> mapped_index -> recovered_val`
+  的第一版动态协议链路
+- 当前主线验收脚本应切换为：
+  - `scripts/test_day31_dynamic_mapping.py`
+
+### 备注
+- Day 29 旧脚本失败并不代表主线回退，而是因为它们验证的是固定基线合同
+- 当前 Day 31 已切换为动态映射合同，因此旧脚本不再适合作为主线验收脚本
+
+### 下一步
+后续优先继续收口：
+1. `DB_NUM_ENTRIES` / `NUM_ENTRIES` 的统一来源
+2. `engine_meta` 字段规范
+3. 错误码 / reason 文案标准化
+4. 决定是否保留固定基线模式供历史脚本继续回归

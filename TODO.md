@@ -732,7 +732,53 @@
 - [ ] 定义 Python 与独立 PIR 后端之间的最终输入输出协议
 - [ ] 收口输出解析与错误返回路径
 - [ ] 评估是否将小型基线 DB / hint 初始化从“请求内构造”迁移为更正式的生命周期管理
-- 
+## Day 31：请求实例与 PIR 输入对齐
+- [x] 定义 `q -> PIR index` 的第一版映射规则：
+  - [x] Python 侧使用 `SHA-256(query_payload) % DB_NUM_ENTRIES`
+  - [x] 当前 `DB_NUM_ENTRIES = 1024`
+- [x] 明确 Python -> Go 的输入协议字段：
+  - [x] `request_id`
+  - [x] `query_payload`
+  - [x] `pir_input`
+  - [x] `engine_request_type`
+- [x] 明确 Go -> Python 的输出协议字段：
+  - [x] `status`
+  - [x] `result`
+  - [x] `recovered_val`
+  - [x] `error_type`
+  - [x] `error_message`
+  - [x] `engine_meta`
+- [x] `engine_adapter.py` 已支持返回三元组：
+  - [x] `result`
+  - [x] `recovered_val`
+  - [x] `engine_meta`
+- [x] `/api/v1/pir/query` 已向上层返回：
+  - [x] `data`
+  - [x] `mapped_index`
+  - [x] `recovered_val`
+- [x] Go wrapper 已从固定基线 `42 -> 4242` 升级为动态可预测 DB：
+  - [x] `vals[i] = i * 101`
+- [x] Go wrapper 已完成动态自验：
+  - [x] `expectedVal = queryIndex * 101`
+- [x] 保留 Day 29 边界分支：
+  - [x] `status_error_test`
+  - [x] `fatal_crash_test`
+  - [x] `bad_json_test`
+- [x] 通过 Day 31 第一轮动态映射验收脚本：
+  - [x] `query_apple`
+  - [x] `query_banana`
+  - [x] `user_12345`
+
+### Day 31 结论
+- [x] 请求实例已能驱动真实 PIR 查询
+- [x] `q -> mapped_index -> recovered_val` 第一版链路已打通
+
+### Day 31 后续收口
+- [ ] 决定 Day 29 固定基线脚本是冻结保留，还是增加“固定基线模式”开关
+- [ ] 收口 `DB_NUM_ENTRIES` / `NUM_ENTRIES` 的统一来源，避免双边手工漂移
+- [ ] 进一步规范 `engine_meta` 字段
+- [ ] 明确 Day 31 最终版错误码 / reason 文案
+
 ## 当前项目状态总结
 - Issuer blind-sign 已跑通
 - Client ticket acquisition 已跑通
