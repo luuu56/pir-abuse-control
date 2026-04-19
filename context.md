@@ -32,6 +32,7 @@
 - Day 26：Auditor 查询接口已通过验收
 - Day 27：最小争议验证闭环已通过验收
 - Day 28：verifier 阶段重构已最终收口
+- Day 29：真实主候选 PIR 正式接入并通过确定性验收
 
 当前已完成：
 
@@ -60,6 +61,15 @@
 - Day 26 Auditor trace 查询接口
 - Day 27 最小争议验证脚本与证据闭环
 - Day 28 verifier 分层重构与最终回归确认
+- Day 29 `pir_server` subprocess JSON bridge
+- Day 29 Go wrapper 主候选入口：
+  - `pir_engine/simplepir/cmd/json_bridge`
+- Day 29 真实 SimplePIR 最小调用链：
+  - `Init`
+  - `Setup`
+  - `Query`
+  - `Answer`
+  - `Recover`
 
 当前 Day 12 生命周期在跨服务模式下已再次通过 4 条关键验收：
 
@@ -255,7 +265,33 @@
    - `scripts/test_day26_auditor_trace.py`
    - `scripts/test_day25_audit_chain.py`
 
-因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、主链核心场景已完成本周联调区分验证、Redis 状态表已完成 Day 22 收口、Day 23 原子核销并发验收通过、Day 24 判定与消费语义一致性已落地、Day 25–27 审计留痕/追溯/争议闭环已形成、Day 28 verifier 内部结构已稳定收口、并可跨服务转发至 PIR Server”的阶段。
+当前 Day 29 已完成“真实主候选 PIR 正式接入”的阶段性收口：
+
+1. `pir_server` 的 subprocess 桥接层已收口为 JSON stdin/stdout 协议
+2. Go wrapper 已从独立 mock 外部脚本推进为主候选仓库内的真实桥接入口：
+   - `pir_engine/simplepir/cmd/json_bridge`
+3. 已恢复并保留边界验收分支：
+   - `fatal_crash_test`
+   - `bad_json_test`
+   - `status_error_test`
+4. 已解决真实加密区 stdout 污染 JSON 协议的问题
+5. 已在 Go wrapper 中接入真实 SimplePIR 最小调用链，并对齐官方 `RunPIR` 顺序：
+   - `Init`
+   - `Setup`
+   - `Query`
+   - `Answer`
+   - `Recover`
+6. 当前 Day 29 的确定性基线为：
+   - `numEntries = 1024`
+   - 固定小型 DB
+   - `vals[42] = 4242`
+   - 查询索引 `42`
+   - 期望恢复真值 `4242`
+7. 已通过两类关键验收：
+   - Go wrapper 边界验收（正常成功、进程崩溃隔离、协议脏数据拦截、`status=error` 逻辑失败）
+   - 真实主候选确定性验收（Python 请求成功穿透 `pir_server -> subprocess -> Go wrapper`，真实 SimplePIR 核心被成功调用，固定索引 `42` 成功恢复固定真值 `4242`）
+
+因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、主链核心场景已完成本周联调区分验证、Redis 状态表已完成 Day 22 收口、Day 23 原子核销并发验收通过、Day 24 判定与消费语义一致性已落地、Day 25–27 审计留痕/追溯/争议闭环已形成、Day 28 verifier 内部结构已稳定收口、Day 29 Python 控制层已可实际驱动真实主候选 SimplePIR 计算、并保持独立进程 / 微服务边界不变”的阶段。
 
 ---
 
@@ -531,6 +567,47 @@
 
 因此，当前 `services/verifier/main.py` 已可视为本阶段稳定收口版本。
 
+### 15. 真实主候选 PIR 接入契约（Day 29）
+当前 Day 29 保持以下架构前提不变：
+
+- PIR 后端继续保持独立进程 / 微服务边界
+- Python `pir_server` 继续仅作为 adapter / 控制层
+- 未引入 Python 进程内 FFI 硬绑定 Go/C/C++ PIR 引擎
+- 未破坏既有 `stub / subprocess` 双模式和前序回归路径
+
+当前 subprocess bridge 契约为：
+
+- Python 与 Go wrapper 通过 JSON stdin/stdout 交互
+- 主候选桥接入口为：
+  - `pir_engine/simplepir/cmd/json_bridge`
+
+当前保留的边界失败分支：
+
+- `fatal_crash_test`
+- `bad_json_test`
+- `status_error_test`
+
+当前真实主候选确定性基线为：
+
+- `numEntries = 1024`
+- 固定小型 DB
+- `vals[42] = 4242`
+- 查询索引 `42`
+- 期望恢复真值 `4242`
+
+当前 Go wrapper 已对齐官方最小调用顺序：
+
+- `Init`
+- `Setup`
+- `Query`
+- `Answer`
+- `Recover`
+
+说明：
+
+- 当前只是“真实主候选 PIR 已正式接入并可被 Python 控制层驱动”
+- 还未完成 `q -> PIR query` 正式映射、最终 I/O 协议收口与 DB / hint 生命周期优化
+
 ---
 
 ## 四、当前 Verifier 的真实语义边界
@@ -589,7 +666,10 @@
 
 - Auditor 更强威胁模型下的密钥托管与外部锚定
 - 审计多事件追踪模式
-- 真实 Go SimplePIR 进程 / 微服务集成（当前仍为 Python stub adapter）
+- `q -> PIR query` 的正式映射
+- Python 与独立 PIR 后端之间的最终输入输出协议
+- 输出解析与错误返回路径标准化
+- DB / hint 生命周期与性能优化
 
 ---
 
@@ -709,6 +789,10 @@
    - Day 27 dispute resolution 全绿
    - Day 26 auditor trace 全绿
    - Day 25 audit chain 全绿
+25. Day 29 真实主候选 PIR 接入验收已通过：
+   - Go wrapper 边界验收通过
+   - 真实主候选确定性验收通过
+   - 固定索引 `42` 成功恢复固定真值 `4242`
 
 ### 已有脚本 / 测试
 - `scripts/test_ticket_flow.sh`
@@ -747,7 +831,7 @@
 ### 下一阶段：端到端回归脚本 / 周回归套件
 目标：
 
-- 在 Day 21 本周联调、Day 22 状态表收口、Day 23 原子核销并发验收、Day 24 判定-消费语义验收、Day 25–27 审计闭环验收、Day 28 verifier 收口回归的基础上，将核心场景沉淀为可重复执行的周联调脚本 / 回归脚本
+- 在 Day 21 本周联调、Day 22 状态表收口、Day 23 原子核销并发验收、Day 24 判定-消费语义验收、Day 25–27 审计闭环验收、Day 28 verifier 收口回归、Day 29 真实主候选 PIR 接入验收的基础上，将核心场景沉淀为可重复执行的周联调脚本 / 回归脚本
 - 避免后续在真实 PIR 后端收口或更强审计增强阶段把当前主链路打坏
 
 建议覆盖场景：
@@ -760,6 +844,7 @@
 6. `PENDING / CONSUMED / FAILED` replay 请求
 7. Auditor trace / 最小一致性查询
 8. 审计账本完整性校验
+9. 真实主候选 PIR 确定性基线（索引 `42` -> 真值 `4242`）
 
 需要完成：
 
@@ -770,7 +855,8 @@
 5. 验证 PIR 后端失败是否稳定命中 `FAILED`
 6. 验证正常请求仍可成功进入 PIR Server 并返回 `SUCCESS`
 7. 验证 Auditor 侧最小追溯与一致性查询保持可用
-8. 将以上场景沉淀为一份周联调脚本 / 回归脚本
+8. 验证真实主候选 PIR 路径保持确定性通过
+9. 将以上场景沉淀为一份周联调脚本 / 回归脚本
 
 ### 再下一阶段：更强审计与部署增强（后续）
 目标：
@@ -788,14 +874,15 @@
 ### 再下一阶段：PIR 协议与真实后端收口（第三阶段）
 目标：
 
-- 将当前 Python stub adapter 逐步推进到真实 PIR 后端边界
+- 将当前 Python stub adapter / subprocess bridge 逐步推进到正式独立 PIR 后端协议边界
 
 需要完成：
 
 1. 抽取 PIR 请求/响应公共模型
-2. 明确 Python 控制层与 PIR 适配层的正式输入输出协议
-3. 将当前 `pir_server` stub 与真实 Go SimplePIR 调用边界对接
-4. 保持 `SUCCESS / FAILED` 与真实 PIR 执行结果绑定
+2. 明确 Python 控制层与 PIR 适配层的最终输入输出协议
+3. 完成 `q -> PIR query` 的正式映射
+4. 统一输出解析与错误返回路径
+5. 收口 DB / hint 生命周期与性能优化
 
 ### 当前不应轻易改动的部分
 
@@ -821,6 +908,7 @@
 - Day 25 当前保持链式 HMAC 审计账本作为第一版 tamper-evident 方案
 - Day 26 当前保持按 `SN` 单条追溯的最小 trace 语义
 - Day 28 当前保持 verifier 三层拆分结构与既有外部 API 契约不漂移
+- Day 29 当前保持 Python 控制层通过 subprocess / JSON bridge 驱动真实主候选 PIR，不引入进程内 FFI 硬绑定
 
 ---
 
@@ -847,6 +935,7 @@
 - **Day 26 Auditor 查询接口已通过验收**
 - **Day 27 最小争议验证闭环已通过验收**
 - **Day 28 verifier 阶段重构已最终收口**
+- **Day 29 真实主候选 PIR 正式接入**
 
 并已确认：
 
@@ -866,3 +955,4 @@
 - Day 26 Auditor trace 与最小一致性查询通过
 - Day 27 最小争议验证闭环通过
 - Day 28 verifier 最终重构回归通过
+- Day 29 真实主候选 PIR 接入与确定性基线通过

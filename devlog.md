@@ -1523,3 +1523,81 @@ PIR Server 日志显示：
   1. 当前哪些能力已经固化
   2. 哪些仍是原型级占位
   3. 下一阶段真实 PIR / eBPF / 更强审计该如何接入
+
+## 2026-04-19
+
+## Day 29：真实主候选 PIR 正式接入完成
+
+### 完成内容
+1. **PIR Adapter 收口**
+   - `pir_server` 继续保持为 Python 控制层 / adapter
+   - 保持 `stub / subprocess` 双模式
+   - subprocess 模式下统一使用 JSON stdin/stdout 协议
+   - 未引入 Python 进程内 FFI 硬绑定
+
+2. **Go Wrapper 二进制边界收口**
+   - 在主候选仓库内建立：
+     - `pir_engine/simplepir/cmd/json_bridge`
+   - 恢复并保留以下边界验收分支：
+     - `fatal_crash_test`
+     - `bad_json_test`
+     - `status_error_test`
+   - 完成 Go 二进制边界验收，证明 Python 可稳定调度真实 Go ELF 二进制
+
+3. **真实 SimplePIR 核心接入**
+   - 不再停留在 placeholder / mock 结果
+   - 已根据主候选仓库内 `RunPIR` 的真实顺序接入最小调用链：
+     - `Init`
+     - `Setup`
+     - `Query`
+     - `Answer`
+     - `Recover`
+   - 当前 Day 29 采用固定小型 DB 作为确定性基线：
+     - `numEntries = 1024`
+     - `vals[42] = 4242`
+
+4. **协议洁净度修复**
+   - 发现真实 SimplePIR 调用期间，底层 Go 输出会污染 stdout，导致 Python 侧命中 `502 Bad Gateway`
+   - 最终通过在真实加密区局部重定向 stdout -> stderr 的方式完成净化
+   - 保证 Python 侧最终仅接收到一份 JSON 响应
+
+5. **确定性红线验收**
+   - 新增确定性 PIR 红线脚本
+   - 初始阶段该脚本能正确拦住 placeholder 假阳性
+   - 真实 SimplePIR 接入后，红线脚本成功转绿：
+     - 固定索引 `42`
+     - 成功恢复固定真值 `4242`
+
+### 验收结果
+#### Day 29（中）：Go Wrapper 边界验收通过
+1. 正常调用成功
+2. `fatal_crash_test` 被隔离并映射为 `500`
+3. `bad_json_test` 被识别并映射为 `502`
+4. `status_error_test` 被识别并映射为逻辑失败路径
+
+#### Day 29（下）：真实主候选确定性验收通过
+执行：
+- `python scripts/test_day29_deterministic_pir.py`
+
+结果：
+1. 请求成功穿透 Python adapter 与 Go wrapper
+2. 真实 SimplePIR 核心计算被执行
+3. 返回：
+   - `Decrypted value from index 42 is: 4242`
+4. 红线脚本通过，证明当前结果不再是 placeholder 假阳性
+
+### 关键结论
+- Day 29 目标已完成：
+  - 系统已能实际调用真实主候选 PIR 后端
+- 当前完成的是“真实主候选可调用”的收口，不是性能优化版实现
+- 当前仍保持既定工程边界：
+  - PIR 后端独立进程 / 微服务
+  - Python 仅作 adapter
+  - 不做进程内 FFI
+
+### 下一步
+进入后续阶段时，优先继续收口：
+1. `q -> PIR query` 的正式映射
+2. Python 与独立 PIR 后端之间的输入输出协议最终版
+3. 输出解析与错误返回路径
+4. DB / hint 生命周期与性能优化

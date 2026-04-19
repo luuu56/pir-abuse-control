@@ -696,7 +696,43 @@
 - [ ] 后续可再考虑收口 `lock_ttl_sec` 到统一 YAML 配置
 - [ ] 后续可再明确审计核心字段与快照字段的边界
 - [ ] 进入下一阶段前，做一次总结构梳理
+## Day 29：正式接入主候选 PIR
+- [x] 将 `pir_server` 的 subprocess 桥接层收口为 JSON stdin/stdout 协议
+- [x] 保留 `stub / subprocess` 双模式，不破坏既有回归路径
+- [x] 完成 Go wrapper 二进制边界接入
+- [x] 恢复并收口 Go wrapper 的边界验收分支：
+  - [x] `fatal_crash_test`
+  - [x] `bad_json_test`
+  - [x] `status_error_test`
+- [x] 在 `pir_engine/simplepir/cmd/json_bridge` 中建立主候选真实桥接入口
+- [x] 对齐 SimplePIR `RunPIR` 真实调用链：
+  - [x] `Init`
+  - [x] `Setup`
+  - [x] `Query`
+  - [x] `Answer`
+  - [x] `Recover`
+- [x] 用固定小型 DB 做 Day 29 确定性基线：
+  - [x] `numEntries = 1024`
+  - [x] `vals[42] = 4242`
+- [x] 完成 stdout 净化，避免底层 Go 输出污染 JSON 协议
+- [x] 通过 Go wrapper 双重自验：
+  - [x] `index == 42 -> 4242`
+  - [x] `index != 42 -> 0`
+- [x] 通过 Day 29（中）Go wrapper 四类异常路径验收
+- [x] 通过 Day 29（下-2）确定性 PIR 红线验收：
+  - [x] 固定索引 `42`
+  - [x] 成功恢复固定真值 `4242`
 
+### Day 29 结论
+- [x] Python 控制层已能稳定驱动真实主候选 SimplePIR 核心计算
+- [x] Day 29 主目标完成：系统已能实际调用真实 PIR 后端
+
+### Day 29 后续衔接（留给 Day 31）
+- [ ] 定义 `q -> PIR query` 的正式映射
+- [ ] 定义 Python 与独立 PIR 后端之间的最终输入输出协议
+- [ ] 收口输出解析与错误返回路径
+- [ ] 评估是否将小型基线 DB / hint 初始化从“请求内构造”迁移为更正式的生命周期管理
+- 
 ## 当前项目状态总结
 - Issuer blind-sign 已跑通
 - Client ticket acquisition 已跑通
