@@ -523,6 +523,50 @@
 - [ ] 视需要补一个对 `/api/v1/verifier/ticket_state/{sn}` 的后查状态复核
 - [ ] 视需要将 `lock_ttl_sec` 收口到 YAML 配置
 - [ ] 继续推进 Day 25：tamper-evident 审计日志
+### Day 25：tamper-evident 审计日志
+- [x] 明确 Day 25 第一版采用链式 HMAC 审计日志
+- [x] 审计日志至少覆盖以下字段：
+  - [x] `sn`
+  - [x] `query_commitment`
+  - [x] `decision`
+  - [x] `timestamp_ms`
+  - [x] `prev_hash`
+  - [x] `entry_mac`
+- [x] 在 `configs/common/base.yaml` 中收口 Auditor 配置：
+  - [x] `auditor.ledger_path`
+  - [x] `auditor.hmac_secret`
+- [x] 升级 `services/auditor/main.py`
+  - [x] 启动时恢复链状态
+  - [x] 使用 `lifespan` 托管初始化
+  - [x] 读取最后一条非空账本记录恢复 `current_prev_hash`
+  - [x] 使用 `threading.Lock()` 保护链式落账临界区
+  - [x] 计算链式 `entry_mac`
+  - [x] 顺序落盘 `audit_ledger.jsonl`
+- [x] 明确 Day 25 第一版 MAC payload 契约：
+  - [x] `sn | query_commitment | decision | timestamp_ms | prev_hash`
+- [x] 升级 `scripts/test_day25_audit_chain.py`
+  - [x] 增加 `timeout`
+  - [x] 增加 `raise_for_status()`
+  - [x] 验证真实账本完整性
+  - [x] 使用副本文件模拟篡改
+  - [x] 验证副本篡改会被发现
+  - [x] 验证结束后清理副本，保持真实账本完好
+
+### Day 25 验收结果
+- [x] 正常生成 2 条真实审计记录
+- [x] 真实账本完整性校验通过
+- [x] 篡改副本中单条记录后，`entry_mac` 校验失败
+- [x] 成功发现篡改行为
+- [x] 真实账本保持完好未被污染
+
+### Day 25 结论
+- [x] Day 25 的链式 HMAC 审计日志已落地
+- [x] Day 25 的“每条日志都能串成防篡改链”验收已通过
+
+### Day 25 小收尾
+- [ ] 视需要补一个按 `sn` 或 `sn + c_q` 的最小查询接口
+- [ ] 视需要扩展为对更多拒绝分支也留审计记录
+- [ ] 后续如进入更强威胁模型，再考虑密钥托管与多进程一致性
 
 ## 当前项目状态总结
 - Issuer blind-sign 已跑通

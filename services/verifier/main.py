@@ -7,7 +7,7 @@ import httpx
 import hmac
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 import uvicorn
 
 root_path = Path(__file__).resolve().parent.parent.parent
@@ -73,6 +73,18 @@ def fetch_issuer_public_key():
         issuer_public_key["e"] = None
 
 
+AUDITOR_URL = f"http://{config.get('auditor', {}).get('host', '127.0.0.1')}:{config.get('auditor', {}).get('port', 8004)}/api/v1/auditor/report"
+
+
+async def dispatch_audit_log(record_dict: dict):
+    """异步投递审计日志给 Auditor"""
+    async with httpx.AsyncClient() as client:
+        try:
+            await client.post(AUDITOR_URL, json=record_dict, timeout=2.0)
+        except Exception as e:
+            logger.error(f"⚠️ Auditor connection failed: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     fetch_issuer_public_key()
@@ -131,8 +143,9 @@ async def call_pir_server(query_payload: str) -> tuple[bool, str]:
         return False, "unknown_error"
 
 
+# --- 修改签名：注入 background_tasks ---
 @app.post("/api/v1/verifier/execute", response_model=PIRResponse)
-async def execute_query(req: RequestInstance):
+async def execute_query(req: RequestInstance, background_tasks: BackgroundTasks):
     # 修正日志打印：此时不能保证 ticket 存在，避免抛出 AttributeError
     logger.info(f"Received request {req.request_id}...")
 
@@ -248,7 +261,7 @@ async def execute_query(req: RequestInstance):
         # 但在日志中记录精细化错误分类，方便后续排障
         logger.error(f"PIR Execution failed due to [{pir_result_or_err}]. Ticket {req.ticket.sn[:16]} burned (FAILED).")
 
-    # --- 7. 审计留痕 (当前为本地组装与日志存根，下阶段接后台投递) ---
+    # --- 7. 审计留痕 (升级为网络异步投递) ---
     audit_record_stub = {
         "request_id": req.request_id,
         "sn": req.ticket.sn,
@@ -257,10 +270,14 @@ async def execute_query(req: RequestInstance):
         "epoch_id": req.ticket.epoch_id,
         "decision": final_decision.value,
         "reason": reason_msg,
-        "timestamp_ms": int(time.time() * 1000)
+        "timestamp_ms": int(time.time() * 1000),
+        # 预留占位符，由 Auditor 负责真实链式计算
+        "prev_hash": "stub",
+        "entry_mac": "stub"
     }
-    logger.info(
-        f"[Audit Stub] Would report to Auditor: SN={audit_record_stub['sn'][:16]}..., Decision={audit_record_stub['decision']}")
+
+    # 将投递任务挂载到后台，直接返回响应给客户端
+    background_tasks.add_task(dispatch_audit_log, audit_record_stub)
 
     return PIRResponse(
         request_id=req.request_id, decision=final_decision,

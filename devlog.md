@@ -1195,3 +1195,76 @@ PIR Server 日志显示：
   1. 明确最小审计字段
   2. 设计链式 HMAC / prev_hash
   3. 保持 Auditor 不影响 Verifier 主返回
+
+## 2026-04-19
+
+## Day 25：tamper-evident 审计日志验收完成
+
+### 完成内容
+1. **Day 25 第一版方案定稿**
+   - 采用链式 HMAC 审计日志作为第一版篡改留痕机制
+   - 不引入更重的链式账本 / 外部公证 / 区块链式结构
+   - 保持与当前原型“小修收口”的路线一致
+
+2. **Auditor 配置收口**
+   - 在 `configs/common/base.yaml` 中新增 / 收口：
+     - `auditor.ledger_path`
+     - `auditor.hmac_secret`
+
+3. **Auditor 链式状态机落地**
+   - 在 `services/auditor/main.py` 中实现：
+     - 启动时恢复 `current_prev_hash`
+     - 读取最后一条非空账本记录恢复状态
+     - 使用 `lifespan` 托管初始化
+     - 使用 `threading.Lock()` 保护链式写入临界区
+     - 计算 `prev_hash` 与 `entry_mac`
+     - 顺序写入 `audit_ledger.jsonl`
+
+4. **MAC payload 契约固定**
+   - 当前 Day 25 第一版固定为：
+     - `sn | query_commitment | decision | timestamp_ms | prev_hash`
+   - Auditor 与本地验收脚本已使用同一契约
+
+5. **Day 25 验收脚本收口**
+   - 完成 `scripts/test_day25_audit_chain.py`
+   - 增加：
+     - `timeout`
+     - `raise_for_status()`
+     - 副本文件篡改验证
+     - 清理副本，避免污染真实账本
+
+### 运行结果
+
+#### Day 25 审计链验收
+执行：
+- `python scripts/test_day25_audit_chain.py`
+
+结果：
+1. 生成 2 条真实访问请求，构建正常审计链
+2. 真实账本完整性校验通过
+3. 在副本账本中静默篡改单条记录
+4. 再次验证时成功发现 `entry_mac` 校验失败
+5. 真实账本保持完好
+
+关键输出：
+- `✅ 完整性验证通过 (共 2 条记录)`
+- `🚨 [篡改发现] 行 2: entry_mac 校验失败`
+- `✅ 成功在副本中捕获篡改行为，真实账本保持完好。`
+
+### 关键结论
+- Day 25 的链式 HMAC 审计日志已落地
+- 当前方案已能对单条历史记录的静默篡改提供留痕能力
+- Day 25 的“每条日志都能串成防篡改链”验收已通过
+
+### 当前限制 / 备注
+- 当前安全边界默认 HMAC 密钥不泄露
+- 当前 `threading.Lock()` 仅适用于单进程原型场景
+- 当前方案主要证明“已记录账本的篡改可发现”，并不等价于更强的外部不可抵赖机制
+- 如后续需要支持多进程部署或更强威胁模型，应再升级顺序化与密钥管理方案
+
+### 下一步建议
+- 进入 Day 26：Auditor 查询接口
+- 重点：
+  1. 按 `SN` 查询
+  2. 按 `SN + c_q` 做一致性查看
+  3. 能读出前后链字段，支撑最小追溯
