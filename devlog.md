@@ -1052,3 +1052,146 @@ LOG_N=14 D=8 go test -v -run=BW
   1. 明确 `UNUSED -> PENDING` 的原子状态转换语义
   2. 验证并发 replay 仅允许一次成功
   3. 将短锁 TTL 视需要收口到 YAML 配置
+
+## 2026-04-18
+
+## Day 23：原子核销并发验收完成
+
+### 完成内容
+1. **原子核销验收脚本落地**
+   - 新增：
+     - `scripts/test_day23_concurrency.py`
+   - 目标：
+     - 验证同一 `SN` 在高并发下只能有一个请求成功完成 `UNUSED -> PENDING`
+
+2. **并发测试机制增强**
+   - 使用 `threading.Barrier` 作为统一起跑发令枪
+   - 避免仅靠 `sleep()` 制造“近似并发”
+   - 提升并发竞争真实性
+
+3. **回归稳定性处理**
+   - 测试开始前显式清理目标 `SN` 对应 Redis key
+   - 避免旧状态污染本轮并发验收结果
+
+4. **状态落点断言补齐**
+   - 在统计成功/失败次数之外
+   - 额外断言并发结束后票据最终状态必须为：
+     - `PENDING`
+
+### 运行结果
+
+#### Day 23 并发原子核销验收
+执行：
+- `python scripts/test_day23_concurrency.py`
+
+结果：
+- 50 个并发线程统一起跑竞争同一 `SN`
+- 成功获取锁：`1` 次
+- 原子拦截失败：`49` 次
+- 最终票据状态：`PENDING`
+
+关键输出：
+- `✅ 成功获取锁 (进入 PIR 主线): 1 次`
+- `❌ 触发原子拦截 (被 Verifier 弹回): 49 次`
+- `📌 最终票据状态: PENDING`
+- `✅ 状态落点断言通过: 最终状态稳定为 PENDING`
+
+### 关键结论
+- Day 23 的 `UNUSED -> PENDING` 原子状态转换已通过并发验收
+- 当前基于 Redis `SETNX` 的最小原子占位路线可工作
+- 当前“并发 replay 只允许一次成功”验收已通过
+
+### 当前限制 / 备注
+- 当前 Day 23 仅完成原子占位并发语义的单点验收
+- 下一步仍需在 Day 24 中把该原子占位与 verifier 主路径正式绑定
+- 当前 `lock_ttl_sec` 仍为脚本 / 调用参数，后续可视需要收口进 YAML
+
+### 下一步建议
+- 进入 Day 24：判定路径绑定原子核销
+- 重点：
+  1. 只有验证通过并成功占位的请求才允许进入 PIR
+  2. PIR 成功推进 `CONSUMED`
+  3. PIR 失败推进 `FAILED`
+  4. 前置验证失败不得改变状态
+## 2026-04-19
+
+## Day 24：判定路径绑定原子核销验收完成
+
+### 完成内容
+1. **Day 24 验收脚本落地**
+   - 新增：
+     - `scripts/test_day24_consume_semantics.py`
+   - 目标：
+     - 验证 Verifier 的判定结果与票据状态消费语义是否严格一致
+
+2. **前置失败不吞票语义确认**
+   - 确认以下分支均保持：
+     - `ticket_state = UNUSED`
+   - 覆盖场景：
+     - 缺失票据
+     - 过期票据
+     - 篡改 binding
+
+3. **成功消费语义确认**
+   - 正常请求通过后：
+     - 先 `UNUSED -> PENDING`
+     - 再 `PENDING -> CONSUMED`
+   - 对外返回：
+     - `decision = SUCCESS`
+     - `ticket_state = CONSUMED`
+
+4. **失败烧毁语义确认**
+   - PIR 后端失败时：
+     - 先 `UNUSED -> PENDING`
+     - 再 `PENDING -> FAILED`
+   - 对外返回：
+     - `decision = REJECTED`
+     - `ticket_state = FAILED`
+     - `reason` 包含 burned
+
+5. **故障注入闭环确认**
+   - 使用 `trigger_failure_test` 触发 `pir_server` 返回 500
+   - Verifier 能正确识别后端失败并将票据烧毁为 `FAILED`
+
+### 运行结果
+
+#### Day 24 判定路径绑定原子核销验收
+执行：
+- `python scripts/test_day24_consume_semantics.py`
+
+结果：
+- 正常请求 -> `SUCCESS + CONSUMED`
+- 缺失票据 -> `REJECTED + UNUSED`
+- 过期票据 -> `REJECTED + UNUSED`
+- 篡改绑定 -> `REJECTED + UNUSED`
+- PIR 后端失败 -> `REJECTED + FAILED`
+
+#### 关键日志确认
+Verifier 日志显示：
+- `UNUSED -> PENDING -> CONSUMED`
+- `UNUSED -> PENDING -> FAILED`
+
+PIR Server 日志显示：
+- `normal_query` 成功返回 200
+- `trigger_failure_test` 触发模拟崩溃并返回 500
+
+### 关键结论
+- Day 24 的“判定与消费语义一致”验收已通过
+- 当前票据状态机定义与 Verifier 主路径实现已经对齐
+- 当前状态机语义可以正式收口为：
+  - `UNUSED`：已签发但尚未进入处理流程
+  - `PENDING`：已通过前置验证并进入后端处理阶段
+  - `CONSUMED`：请求成功执行完成
+  - `FAILED`：已进入处理阶段，但后端执行失败或调用异常终止
+
+### 当前限制 / 备注
+- 当前 `/execute` 返回体已经足以证明 Day 24 语义成立
+- 如后续需要，可再补基于 `/api/v1/verifier/ticket_state/{sn}` 的状态后查复核
+- shell 中 `deactivate` 的 CRLF / Anaconda 残留问题不影响本轮 Day 24 验收结果，应单独处理
+
+### 下一步建议
+- 进入 Day 25：tamper-evident 审计日志
+- 重点：
+  1. 明确最小审计字段
+  2. 设计链式 HMAC / prev_hash
+  3. 保持 Auditor 不影响 Verifier 主返回

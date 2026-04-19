@@ -453,6 +453,77 @@
 - [ ] 视需要将 `PENDING` 短锁 TTL 收口到 YAML 配置
 - [ ] 视后续 Auditor 对账需求，再决定是否将 Redis value 从纯状态字符串升级为结构化 JSON
 - [ ] 在 Day 23/24 中继续把 `try_lock()` 与主验证路径原子消费语义正式收口
+### Day 23：原子核销
+- [x] 复用 `services/verifier/state_manager.py` 中的 `try_lock(sn, lock_ttl_sec=...)`
+- [x] 明确 Day 23 主目标：
+  - [x] 用 Redis `SETNX` 语义实现 `UNUSED -> PENDING` 原子状态转换
+  - [x] 保证同一 `SN` 不能被多个并发请求同时进入处理态
+- [x] 新增并发验收脚本：
+  - [x] `scripts/test_day23_concurrency.py`
+- [x] 使用 `threading.Barrier` 实现统一起跑，增强并发竞争真实性
+- [x] 测试前显式清理 Redis key，避免脏状态污染回归结果
+- [x] 补充最终状态落点断言：
+  - [x] 并发结束后票据状态必须稳定为 `PENDING`
+
+### Day 23 验收结果
+- [x] 50 个并发线程同时竞争同一 `SN`
+- [x] 仅 1 个请求成功获取锁并进入处理态
+- [x] 其余 49 个请求被原子拦截
+- [x] 最终票据状态稳定为 `PENDING`
+
+### Day 23 结论
+- [x] Day 23 的 `UNUSED -> PENDING` 原子状态转换已通过并发验收
+- [x] Day 23 的“并发 replay 只允许一次成功”验收已通过
+
+### Day 23 小收尾
+- [ ] 视需要将 `lock_ttl_sec` 收口到统一 YAML 配置
+- [ ] 在 Day 24 中把当前原子占位与 verifier 主路径正式绑定
+- [ ] 视需要补充多轮重复并发回归，验证结果稳定性
+
+### Day 24：判定路径绑定原子核销
+- [x] 确认 Verifier 主路径遵循以下顺序：
+  - [x] 前置验证（缺失票据 / epoch / RSA 验签 / binding 校验）
+  - [x] 原子占位：`UNUSED -> PENDING`
+  - [x] 成功占位后才允许进入 PIR 主路径
+- [x] 确认前置验证失败时不改变票据状态：
+  - [x] 缺失票据 -> `REJECTED + UNUSED`
+  - [x] 过期票据 -> `REJECTED + UNUSED`
+  - [x] 篡改 binding -> `REJECTED + UNUSED`
+- [x] 确认 PIR 成功后的状态流转：
+  - [x] `PENDING -> CONSUMED`
+  - [x] 返回 `SUCCESS + CONSUMED`
+- [x] 确认 PIR 失败后的状态流转：
+  - [x] `PENDING -> FAILED`
+  - [x] 返回 `REJECTED + FAILED`
+  - [x] `reason` 包含 burned 语义
+- [x] 新增 Day 24 验收脚本：
+  - [x] `scripts/test_day24_consume_semantics.py`
+- [x] 用固定故障注入 payload 收口 Case 5：
+  - [x] `trigger_failure_test`
+
+### Day 24 验收结果
+- [x] 正常请求 -> `SUCCESS + CONSUMED`
+- [x] 无票据请求 -> `REJECTED + UNUSED`
+- [x] 过期票据 -> `REJECTED + UNUSED`
+- [x] 篡改绑定 -> `REJECTED + UNUSED`
+- [x] PIR 后端失败 -> `REJECTED + FAILED`
+- [x] Verifier 日志确认状态流转：
+  - [x] `UNUSED -> PENDING -> CONSUMED`
+  - [x] `UNUSED -> PENDING -> FAILED`
+
+### Day 24 结论
+- [x] Day 24 的“判定与消费语义一致”验收已通过
+- [x] 当前票据状态机语义与主路径实现对齐：
+  - [x] `UNUSED`：已签发但尚未进入处理流程
+  - [x] `PENDING`：已通过前置验证并进入后端处理阶段
+  - [x] `CONSUMED`：请求成功执行完成
+  - [x] `FAILED`：已进入处理阶段，但后端失败或异常终止
+
+### Day 24 小收尾
+- [ ] 视需要补一个对 `/api/v1/verifier/ticket_state/{sn}` 的后查状态复核
+- [ ] 视需要将 `lock_ttl_sec` 收口到 YAML 配置
+- [ ] 继续推进 Day 25：tamper-evident 审计日志
+
 ## 当前项目状态总结
 - Issuer blind-sign 已跑通
 - Client ticket acquisition 已跑通

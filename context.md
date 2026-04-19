@@ -26,6 +26,8 @@
 - Verifier -> PIR Server 的第一阶段网络桥接
 - blind-sign 主链路的第一批核心单测与错误码 / API 收口
 - Day 22：Redis 状态表与状态查询接口收口
+- Day 23：`UNUSED -> PENDING` 原子核销并发验收通过
+- Day 24：判定路径绑定原子核销已通过验收
 
 当前已完成：
 
@@ -48,6 +50,8 @@
 - blind-sign / verify 第一批核心单测
 - Day 22 Redis 状态表管理器
 - `GET /api/v1/verifier/ticket_state/{sn}` 状态查询接口
+- Day 23 并发原子核销验收脚本
+- Day 24 判定路径与票据终态绑定一致性验收脚本
 
 当前 Day 12 生命周期在跨服务模式下已再次通过 4 条关键验收：
 
@@ -144,7 +148,29 @@
    - TTL 过期后 Redis key 被物理清理，逻辑状态回归 `UNUSED`
    - 非法 SN 查询返回 `400 Bad Request`
 
-因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、主链核心场景已完成本周联调区分验证、Redis 状态表已完成 Day 22 收口、并可跨服务转发至 PIR Server”的阶段。
+当前 Day 23 已完成 `UNUSED -> PENDING` 原子核销的并发验收：
+
+1. 基于 Redis `SETNX` 语义实现 `try_lock(sn, lock_ttl_sec=...)`
+2. 新增 `scripts/test_day23_concurrency.py`
+3. 使用 `threading.Barrier` 实现 50 个并发线程统一起跑
+4. 同一 `SN` 在 50 个并发请求中：
+   - 仅 1 个请求成功占位
+   - 49 个请求被原子拦截
+5. 并发结束后，票据最终状态稳定为 `PENDING`
+
+当前 Day 24 已完成判定路径绑定原子核销的验收：
+
+1. 只有当前置验证全部通过，且成功执行 `try_lock()` 将票据推进到 `PENDING` 时，请求才允许进入 PIR 主路径
+2. 当前置验证失败时，请求被直接拒绝，票据状态保持 `UNUSED`，不会误吞票
+3. 当 PIR 后端执行成功时，票据状态由 `PENDING -> CONSUMED`，并返回：
+   - `decision = SUCCESS`
+   - `ticket_state = CONSUMED`
+4. 当 PIR 后端执行失败或调用异常时，票据状态由 `PENDING -> FAILED`，并返回：
+   - `decision = REJECTED`
+   - `ticket_state = FAILED`
+   - `reason` 包含 burned 语义
+
+因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、主链核心场景已完成本周联调区分验证、Redis 状态表已完成 Day 22 收口、Day 23 原子核销并发验收通过、Day 24 判定与消费语义一致性已落地、并可跨服务转发至 PIR Server”的阶段。
 
 ---
 
@@ -301,11 +327,37 @@
   - `+ retention buffer (当前为 600 秒)`
 - `ttl_override_sec` 仅用于测试 / 联调
 
-当前原子占位契约：
+### 9. 原子核销第一版契约（Day 23）
+当前 Day 23 的原子核销契约为：
 
 - `try_lock(sn, lock_ttl_sec=...)`
-- 使用 `nx=True` 将状态推进到 `PENDING`
-- 该能力目前已提前存在，但语义上仍归属于 Day 23 原子防并发的正式收口范围
+- 基于 Redis `SETNX` 语义执行原子占位
+- 目标状态转换为：
+  - `UNUSED -> PENDING`
+- 语义保证：
+  - 同一 `SN` 在并发竞争下只允许一次成功
+  - 其余并发请求必须命中失败分支
+- 当前并发验收已通过：
+  - 50 并发线程
+  - 1 次成功
+  - 49 次失败
+  - 最终状态落点为 `PENDING`
+
+### 10. 判定路径与原子核销绑定契约（Day 24）
+当前 Day 24 的主路径契约为：
+
+1. 只有当前置验证全部通过，且 `try_lock()` 成功将票据推进到 `PENDING` 时，请求才允许进入 PIR 主路径
+2. 前置验证失败时，请求必须直接拒绝，票据状态保持 `UNUSED`
+3. PIR 成功时：
+   - `PENDING -> CONSUMED`
+4. PIR 失败时：
+   - `PENDING -> FAILED`
+
+这意味着：
+
+- “是否进入 PIR” 与 “是否成功占位到 `PENDING`” 已绑定
+- “PIR 执行结果” 与 “票据终态” 已绑定
+- 当前判定路径与票据消费语义已一致
 
 ---
 
@@ -416,7 +468,7 @@
 - `admission_proof` 已进入 `/issue` 的前置校验路径
 
 ### TicketState
-当前 Day 22 已使用统一状态枚举：
+当前 Day 22 / Day 23 / Day 24 已使用统一状态枚举：
 
 - `UNUSED`
 - `PENDING`
@@ -427,6 +479,8 @@
 
 - `UNUSED` 为逻辑默认态
 - Redis 不要求预写物理 `UNUSED`
+- `PENDING` 为原子占位后的处理中状态
+- `CONSUMED / FAILED` 为 PIR 成功 / 失败后的终态
 - 对外查询与内部状态机语义统一使用同一枚举
 
 ---
@@ -459,6 +513,17 @@
 18. Day 22 verifier 状态查询接口已通过：
    - 合法 64-char hex `SN` 返回 200 + `ticket_state`
    - 非法 `SN` 返回 400
+19. Day 23 原子核销并发验收已通过：
+   - 50 并发线程统一起跑
+   - 1 次成功
+   - 49 次失败
+   - 最终状态 `PENDING`
+20. Day 24 判定路径绑定原子核销语义验收已通过：
+   - 正常请求 -> `SUCCESS + CONSUMED`
+   - 无票据请求 -> `REJECTED + UNUSED`
+   - 过期票据 -> `REJECTED + UNUSED`
+   - 篡改 binding -> `REJECTED + UNUSED`
+   - PIR 后端失败 -> `REJECTED + FAILED`
 
 ### 已有脚本 / 测试
 - `scripts/test_ticket_flow.sh`
@@ -479,38 +544,38 @@
   - blind-sign / verify 核心单测
 - `scripts/test_day22_redis_state.py`
   - 验证 Day 22 Redis 状态表核心语义与 Epoch TTL
+- `scripts/test_day23_concurrency.py`
+  - 验证 Day 23 原子核销并发语义
+- `scripts/test_day24_consume_semantics.py`
+  - 验证 Day 24 判定路径与票据终态绑定一致性
 
 ---
 
 ## 七、当前最值得继续推进的方向
 
-### 下一阶段：Day 23 原子核销正式收口
+### 下一阶段：端到端回归脚本 / 周回归套件
 目标：
 
-- 在当前 Day 22 已完成状态表与状态查询的基础上
-- 正式将 `UNUSED -> PENDING` 原子状态转换收口为 Day 23 验收主体
-- 锁死并发 replay 时只允许一个请求成功进入处理态
+- 在 Day 21 本周联调、Day 22 状态表收口、Day 23 原子核销并发验收、Day 24 判定-消费语义验收的基础上，将核心场景沉淀为可重复执行的周联调脚本 / 回归脚本
+- 避免后续在 Auditor、协议收口等阶段把当前主链路打坏
+
+建议覆盖场景：
+
+1. 正常请求
+2. 无票据请求
+3. 过期票据
+4. 篡改 binding 请求
+5. PIR 后端失败请求
 
 需要完成：
 
-1. 明确 `try_lock()` 的 Day 23 正式语义
-2. 将短锁 TTL 视需要收口到 YAML 配置
-3. 用并发测试验证相同 `SN` 只允许一次占位成功
-4. 将该原子占位与 verifier 主路径进一步对齐
-
-### 再下一阶段：Day 24 判定路径绑定原子核销
-目标：
-
-- 只有验证通过并成功将状态推进到 `PENDING` 时，请求才允许进入 PIR 主路径
-- PIR 成功后推进 `CONSUMED`
-- PIR 失败后推进 `FAILED`
-- 前置验证失败不改变状态
-
-需要完成：
-
-1. 将当前状态表语义与 verifier 主路径进一步收口
-2. 验证正常 / 失败 / replay / 前置拒绝场景与票据状态严格一致
-3. 保持当前 Redis miss == `UNUSED` 语义不回退
+1. 整理覆盖正常请求与异常请求的最小联调矩阵
+2. 验证无票据请求是否被正确业务拒绝
+3. 验证过期票据是否在 verifier 前置快拒绝
+4. 验证篡改 `q / b / w` 请求是否命中 binding consistency reject
+5. 验证 PIR 后端失败是否稳定命中 `FAILED`
+6. 验证正常请求仍可成功进入 PIR Server 并返回 `SUCCESS`
+7. 将以上场景沉淀为一份周联调脚本 / 回归脚本
 
 ### 再下一阶段：Auditor / 审计闭环（后续）
 目标：
@@ -557,6 +622,8 @@
 - 当前审计仍先走最小存根，再逐步接后台投递
 - 项目继续优先“小修收口”，避免中途大重构
 - Day 22 当前保持 `UNUSED` 为逻辑默认态，而非签发即预写 Redis
+- Day 23 当前保持基于 Redis `SETNX` 的最小原子占位路线，不额外引入复杂 Lua/事务重构
+- Day 24 当前保持“前置验证失败不吞票；只有成功占位到 `PENDING` 的请求才进入 PIR；PIR 结果严格绑定终态”的主路径语义
 
 ---
 
@@ -577,6 +644,8 @@
 - **blind-sign / verify 第一批核心单测**
 - **Day 21 本周联调**
 - **Day 22 Redis 状态表与状态查询接口收口**
+- **Day 23 原子核销并发验收通过**
+- **Day 24 判定路径绑定原子核销已通过验收**
 
 并已确认：
 
@@ -590,3 +659,5 @@
 - Day 20 binding verify 通过
 - Day 21 本周联调四类场景通过
 - Day 22 Redis 状态表核心语义与 verifier 状态查询接口通过
+- Day 23 原子核销并发验收通过
+- Day 24 判定路径绑定原子核销语义验收通过
