@@ -1851,3 +1851,67 @@ PIR Server 日志显示：
 1. Day 34 功能性指标整理
 2. 汇总成功率 / 拦截率 / 进入 PIR 比例
 3. 保持 Day 32 与 Day 33 的主链与负例能力都不回退
+## 2026-04-19
+
+## Day 34：第一轮功能性指标整理完成
+
+### 完成内容
+1. **新增 Day 34 功能性指标脚本**
+   - 新增：
+     - `scripts/test_day34_functional_metrics.py`
+   - 脚本采用固定配比测试流量，而非随机概率压测
+   - 当前测试波次为：
+     1. 5 个正常请求
+     2. 3 个 replay 攻击
+     3. 1 个 binding 篡改请求
+     4. 1 个伪造签名请求
+
+2. **基于 metrics 做 PIR 进入比例对账**
+   - 当前继续复用 verifier 的内存指标：
+     - `total_requests`
+     - `blocked_before_pir`
+     - `pir_invoked`
+   - 并在报表中同时打印：
+     - `Expected PIR Invocations`
+     - `Actual PIR Engine Invoked`
+
+3. **功能性指标报表输出完成**
+   - 当前脚本会输出以下指标：
+     - 正常成功率
+     - replay 拦截率
+     - binding 错误拦截率
+     - signature 伪造拦截率
+     - PIR 进入比例
+
+### 验收结果
+执行：
+- `python scripts/test_day34_functional_metrics.py`
+
+初始 metrics：
+- `{'total_requests': 0, 'pir_invoked': 0, 'blocked_before_pir': 0, 'block_ratio_percent': 0.0}`
+
+最终 metrics：
+- `{'total_requests': 10, 'pir_invoked': 5, 'blocked_before_pir': 5, 'block_ratio_percent': 50.0}`
+
+最终功能性指标结果：
+- `Normal Request Success Rate  : 100.00% (5/5)`
+- `Replay Interception Rate     : 100.00% (3/3)`
+- `Binding Interception Rate    : 100.00% (1/1)`
+- `Signature Interception Rate  : 100.00% (1/1)`
+- `Expected PIR Invocations     : 5`
+- `Actual PIR Engine Invoked    : 5`
+- `PIR Entry Proportion         : 50.00%`
+
+### 关键结论
+- Day 34 验收通过：
+  - 第一轮功能性指标整理完成
+- 当前系统已经同时具备：
+  - Day 32：主链 happy path
+  - Day 33：非法请求隔离
+  - Day 34：功能性指标定量化能力
+
+### 下一步
+后续优先继续收口：
+1. 失败原因进一步分类统计
+2. 功能性指标脚本与主链/攻击脚本的职责边界整理
+3. 决定哪些指标保留为常驻调试接口，哪些只保留在实验脚本中
