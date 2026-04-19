@@ -28,6 +28,10 @@
 - Day 22：Redis 状态表与状态查询接口收口
 - Day 23：`UNUSED -> PENDING` 原子核销并发验收通过
 - Day 24：判定路径绑定原子核销已通过验收
+- Day 25：tamper-evident 审计日志已通过验收
+- Day 26：Auditor 查询接口已通过验收
+- Day 27：最小争议验证闭环已通过验收
+- Day 28：verifier 阶段重构已最终收口
 
 当前已完成：
 
@@ -52,6 +56,10 @@
 - `GET /api/v1/verifier/ticket_state/{sn}` 状态查询接口
 - Day 23 并发原子核销验收脚本
 - Day 24 判定路径与票据终态绑定一致性验收脚本
+- Day 25 链式 HMAC 审计账本
+- Day 26 Auditor trace 查询接口
+- Day 27 最小争议验证脚本与证据闭环
+- Day 28 verifier 分层重构与最终回归确认
 
 当前 Day 12 生命周期在跨服务模式下已再次通过 4 条关键验收：
 
@@ -170,7 +178,84 @@
    - `ticket_state = FAILED`
    - `reason` 包含 burned 语义
 
-因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、主链核心场景已完成本周联调区分验证、Redis 状态表已完成 Day 22 收口、Day 23 原子核销并发验收通过、Day 24 判定与消费语义一致性已落地、并可跨服务转发至 PIR Server”的阶段。
+当前 Day 25 已完成 tamper-evident 审计日志的验收：
+
+1. Auditor 采用链式 HMAC 账本方案
+2. 每条记录覆盖至少以下字段：
+   - `sn`
+   - `query_commitment`
+   - `decision`
+   - `timestamp_ms`
+   - `prev_hash`
+   - `entry_mac`
+3. Auditor 与验收脚本统一采用以下 MAC payload 顺序：
+   - `sn | query_commitment | decision | timestamp_ms | prev_hash`
+4. 真实账本完整性验证通过
+5. 篡改副本中单条记录后，`entry_mac` 校验失败
+6. 篡改能够被明确发现，真实账本未被污染
+
+当前 Day 26 已完成 Auditor 查询接口验收：
+
+1. 已新增：
+   - `GET /api/v1/auditor/trace/{sn}`
+2. 当前接口支持：
+   - 按 `SN` 查询单条审计记录
+   - 返回所在账本行号 `ledger_line`
+   - 返回链上下文字段：
+     - `prev_hash`
+     - `entry_mac`
+   - 在传入 `expected_cq` 时执行最小一致性判定
+3. 验收结果：
+   - 按 `SN` 可成功追溯到目标请求
+   - 正确 `c_q` 一致性判定成功
+   - 伪造 `c_q` 一致性判定失败
+
+当前 Day 27 已完成最小争议验证闭环验收：
+
+1. 已可组合使用三类证据：
+   - HTTP 响应证据
+   - Verifier 状态证据
+   - Auditor 审计证据
+2. 已覆盖争议场景：
+   - 前置拦截（Dropped Request）
+   - 处理中重放（PENDING Collision）
+   - 已核销重放（CONSUMED Collision）
+   - 后端失败与烧毁重放（FAILED Collision）
+3. 已证明：
+   - 被 drop 的请求能解释原因
+   - 进入 `PENDING` 的请求能查到处理中痕迹
+   - 成功完成的请求能证明状态转为 `CONSUMED`
+   - 后端失败或异常中断的请求能证明状态转为 `FAILED`
+   - replay 请求能区分命中 `PENDING / CONSUMED / FAILED`
+
+当前 Day 28 已完成 verifier 阶段重构的最终收口：
+
+1. `services/verifier/main.py` 当前已稳定拆分为三层：
+   - `_run_precondition_check`
+   - `_run_crypto_verification`
+   - `execute_query`
+2. 当前外部契约保持不变：
+   - `Missing Ticket in request`
+   - `Invalid Ticket Signature`
+   - `Missing Request Witness`
+   - `Missing Binding Tag`
+   - `Binding Consistency Check Failed`
+   - `Invalid Binding Material`
+   - `Invalid SN format: must be 64-char hex`
+3. 当前状态机主路径仍保持：
+   - `UNUSED -> PENDING -> CONSUMED`
+   - `UNUSED -> PENDING -> FAILED`
+4. `call_pir_server()` 异常分类已恢复为：
+   - `timeout`
+   - `http_error_<code>`
+   - `connection_error`
+   - `unknown_error`
+5. 最终版回归已完成以下三组高强度验收：
+   - `scripts/test_day27_dispute_resolution.py`
+   - `scripts/test_day26_auditor_trace.py`
+   - `scripts/test_day25_audit_chain.py`
+
+因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、主链核心场景已完成本周联调区分验证、Redis 状态表已完成 Day 22 收口、Day 23 原子核销并发验收通过、Day 24 判定与消费语义一致性已落地、Day 25–27 审计留痕/追溯/争议闭环已形成、Day 28 verifier 内部结构已稳定收口、并可跨服务转发至 PIR Server”的阶段。
 
 ---
 
@@ -359,6 +444,93 @@
 - “PIR 执行结果” 与 “票据终态” 已绑定
 - 当前判定路径与票据消费语义已一致
 
+### 11. tamper-evident 审计日志契约（Day 25）
+当前 Day 25 第一版采用链式 HMAC 审计日志方案。
+
+当前至少覆盖以下字段：
+
+- `sn`
+- `query_commitment`
+- `decision`
+- `timestamp_ms`
+- `prev_hash`
+- `entry_mac`
+
+当前 Auditor 与验收脚本统一采用以下顺序计算 HMAC：
+
+- `sn | query_commitment | decision | timestamp_ms | prev_hash`
+
+说明：
+
+- 该顺序是 Day 25 第一版固定契约
+- 若后续扩展字段，必须同步更新 Auditor 与本地验收脚本
+
+当前实现约束：
+
+- Auditor 作为唯一落账方
+- 使用 `threading.Lock()` 保护当前进程内顺序落账
+- 账本按 JSONL 顺序写入 `audit_ledger.jsonl`
+- Auditor 启动时通过 `lifespan` 恢复链状态
+
+### 12. Auditor 最小追溯契约（Day 26）
+当前已新增：
+
+- `GET /api/v1/auditor/trace/{sn}`
+
+当前接口支持：
+
+1. 按 `SN` 查询单条审计记录
+2. 返回该条记录所在账本行号
+3. 返回链上下文字段：
+   - `prev_hash`
+   - `entry_mac`
+4. 当传入 `expected_cq` 时，执行最小一致性判定
+
+当前原型假设：
+
+- 一张票据最终只对应一条主审计记录
+- 因此当前接口按 `SN` 找到即停
+
+### 13. 最小争议验证契约（Day 27）
+当前系统已可组合使用以下三类证据：
+
+1. HTTP 响应证据
+2. Verifier 状态证据
+3. Auditor 审计证据
+
+当前已覆盖争议场景：
+
+- 前置拦截（Dropped Request）
+- 处理中重放（PENDING Collision）
+- 已核销重放（CONSUMED Collision）
+- 后端失败与烧毁重放（FAILED Collision）
+
+### 14. verifier 分层重构契约（Day 28）
+当前 `services/verifier/main.py` 已稳定拆分为三层：
+
+1. `_run_precondition_check`
+2. `_run_crypto_verification`
+3. `execute_query`
+
+当前外部行为保持不变：
+
+- `Missing Ticket in request`
+- `Invalid Ticket Signature`
+- `Missing Request Witness`
+- `Missing Binding Tag`
+- `Binding Consistency Check Failed`
+- `Invalid Binding Material`
+- `Invalid SN format: must be 64-char hex`
+
+当前 `call_pir_server()` 异常分类保持：
+
+- `timeout`
+- `http_error_<code>`
+- `connection_error`
+- `unknown_error`
+
+因此，当前 `services/verifier/main.py` 已可视为本阶段稳定收口版本。
+
 ---
 
 ## 四、当前 Verifier 的真实语义边界
@@ -379,6 +551,7 @@
 - 根据 PIR Server 返回结果将票据推进为：
   - `CONSUMED`
   - `FAILED`
+- 主链完成后异步投递审计记录，不阻塞客户端主返回
 
 当前额外已具备：
 
@@ -402,9 +575,9 @@
 
 当前审计语义：
 
-- Verifier 已开始在本地组装审计分录存根
-- 当前仅以日志形式留痕
-- Auditor HTTP 投递尚未接入主链路作为正式完成项
+- Verifier 已完成异步审计投递分层
+- Auditor 已具备落账、最小追溯与最小一致性核查能力
+- 当前已达到原型阶段“可留痕、可最小追溯、可最小对账、可争议解释”的水平
 
 当前 blind-sign 语义：
 
@@ -414,9 +587,8 @@
 
 当前仍未完全做完：
 
-- Auditor 服务 HTTP 存根正式并入主链
-- Verifier -> Auditor 的后台上报正式验收
-- 审计查询接口正式验收
+- Auditor 更强威胁模型下的密钥托管与外部锚定
+- 审计多事件追踪模式
 - 真实 Go SimplePIR 进程 / 微服务集成（当前仍为 Python stub adapter）
 
 ---
@@ -524,6 +696,19 @@
    - 过期票据 -> `REJECTED + UNUSED`
    - 篡改 binding -> `REJECTED + UNUSED`
    - PIR 后端失败 -> `REJECTED + FAILED`
+21. Day 25 审计账本防篡改链验收已通过：
+   - 真实账本完整性验证通过
+   - 篡改副本后 `entry_mac` 校验失败
+22. Day 26 Auditor trace 与一致性查询验收已通过：
+   - 按 `SN` 成功追溯
+   - 正确 `c_q` 一致
+   - 伪造 `c_q` 不一致
+23. Day 27 最小争议验证闭环验收已通过：
+   - drop / `PENDING` / `CONSUMED` / `FAILED` 四类争议均可给出最小证据解释
+24. Day 28 verifier 最终重构回归已通过：
+   - Day 27 dispute resolution 全绿
+   - Day 26 auditor trace 全绿
+   - Day 25 audit chain 全绿
 
 ### 已有脚本 / 测试
 - `scripts/test_ticket_flow.sh`
@@ -548,6 +733,12 @@
   - 验证 Day 23 原子核销并发语义
 - `scripts/test_day24_consume_semantics.py`
   - 验证 Day 24 判定路径与票据终态绑定一致性
+- `scripts/test_day25_audit_chain.py`
+  - 验证 Day 25 审计账本链式 HMAC 防篡改
+- `scripts/test_day26_auditor_trace.py`
+  - 验证 Day 26 Auditor trace 与一致性查询
+- `scripts/test_day27_dispute_resolution.py`
+  - 验证 Day 27 最小争议验证闭环
 
 ---
 
@@ -556,8 +747,8 @@
 ### 下一阶段：端到端回归脚本 / 周回归套件
 目标：
 
-- 在 Day 21 本周联调、Day 22 状态表收口、Day 23 原子核销并发验收、Day 24 判定-消费语义验收的基础上，将核心场景沉淀为可重复执行的周联调脚本 / 回归脚本
-- 避免后续在 Auditor、协议收口等阶段把当前主链路打坏
+- 在 Day 21 本周联调、Day 22 状态表收口、Day 23 原子核销并发验收、Day 24 判定-消费语义验收、Day 25–27 审计闭环验收、Day 28 verifier 收口回归的基础上，将核心场景沉淀为可重复执行的周联调脚本 / 回归脚本
+- 避免后续在真实 PIR 后端收口或更强审计增强阶段把当前主链路打坏
 
 建议覆盖场景：
 
@@ -566,6 +757,9 @@
 3. 过期票据
 4. 篡改 binding 请求
 5. PIR 后端失败请求
+6. `PENDING / CONSUMED / FAILED` replay 请求
+7. Auditor trace / 最小一致性查询
+8. 审计账本完整性校验
 
 需要完成：
 
@@ -575,21 +769,21 @@
 4. 验证篡改 `q / b / w` 请求是否命中 binding consistency reject
 5. 验证 PIR 后端失败是否稳定命中 `FAILED`
 6. 验证正常请求仍可成功进入 PIR Server 并返回 `SUCCESS`
-7. 将以上场景沉淀为一份周联调脚本 / 回归脚本
+7. 验证 Auditor 侧最小追溯与一致性查询保持可用
+8. 将以上场景沉淀为一份周联调脚本 / 回归脚本
 
-### 再下一阶段：Auditor / 审计闭环（后续）
+### 再下一阶段：更强审计与部署增强（后续）
 目标：
 
-- 在不破坏当前已稳定的 blind-sign 主链路、admission 第一版、epoch 时间窗、binding verify、生命周期状态机与 Verifier -> PIR Server 网络桥接的前提下
-- 为放行 / 拒绝 / 核销结果增加可接收、可查询、可追溯的最小审计落点
+- 在不破坏当前已稳定的最小审计闭环前提下，逐步增强威胁模型覆盖与部署稳健性
 
-需要完成：
+候选方向：
 
-1. 建立 `services/auditor/main.py`
-2. 暴露 `/api/v1/auditor/report`
-3. 将当前 `[Audit Stub]` 升级为后台 HTTP 上报
-4. 明确 `AuditRecord` 字段与 `common.models` 对齐
-5. 验证 Auditor 不可用时不影响 Verifier 主返回
+1. 审计密钥托管与轮换
+2. 多进程 / 多实例下的顺序化落账
+3. 外部锚定或周期性摘要封存
+4. 多事件追踪模式（单 SN 多记录）
+5. 更强的审计恢复与自检能力
 
 ### 再下一阶段：PIR 协议与真实后端收口（第三阶段）
 目标：
@@ -619,11 +813,14 @@
 - binding verify 已在 verifier 侧正式生效
 - PIR 后端仍保持独立进程 / 微服务集成方向
 - eBPF 仍只做轻量前置过滤
-- 当前审计仍先走最小存根，再逐步接后台投递
+- 当前审计已形成最小闭环，但仍应避免在未评估前贸然重型化
 - 项目继续优先“小修收口”，避免中途大重构
 - Day 22 当前保持 `UNUSED` 为逻辑默认态，而非签发即预写 Redis
 - Day 23 当前保持基于 Redis `SETNX` 的最小原子占位路线，不额外引入复杂 Lua/事务重构
 - Day 24 当前保持“前置验证失败不吞票；只有成功占位到 `PENDING` 的请求才进入 PIR；PIR 结果严格绑定终态”的主路径语义
+- Day 25 当前保持链式 HMAC 审计账本作为第一版 tamper-evident 方案
+- Day 26 当前保持按 `SN` 单条追溯的最小 trace 语义
+- Day 28 当前保持 verifier 三层拆分结构与既有外部 API 契约不漂移
 
 ---
 
@@ -646,6 +843,10 @@
 - **Day 22 Redis 状态表与状态查询接口收口**
 - **Day 23 原子核销并发验收通过**
 - **Day 24 判定路径绑定原子核销已通过验收**
+- **Day 25 tamper-evident 审计日志已通过验收**
+- **Day 26 Auditor 查询接口已通过验收**
+- **Day 27 最小争议验证闭环已通过验收**
+- **Day 28 verifier 阶段重构已最终收口**
 
 并已确认：
 
@@ -661,3 +862,7 @@
 - Day 22 Redis 状态表核心语义与 verifier 状态查询接口通过
 - Day 23 原子核销并发验收通过
 - Day 24 判定路径绑定原子核销语义验收通过
+- Day 25 审计账本链式 HMAC 防篡改通过
+- Day 26 Auditor trace 与最小一致性查询通过
+- Day 27 最小争议验证闭环通过
+- Day 28 verifier 最终重构回归通过

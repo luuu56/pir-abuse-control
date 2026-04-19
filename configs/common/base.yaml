@@ -10,10 +10,19 @@ verifier:
   host: 127.0.0.1
   port: 8002
 
+# configs/common/base.yaml 中的 pir_server 块更新如下：
 pir_server:
-  host: 127.0.0.1
+  host: "127.0.0.1"
   port: 8003
+  # 运行模式: "stub" 或 "subprocess"
+  engine_mode: "subprocess"
   stub_latency_sec: 1.0
+
+  # 独立的真实引擎桥接配置块
+  subprocess:
+    engine_cmd: ["python", "scripts/mock_external_pir.py"]
+    engine_timeout_sec: 15.0
+    working_dir: ""  # 为空则默认使用项目 root_path
 
 # configs/common/base.yaml 追加/修改
 auditor:
