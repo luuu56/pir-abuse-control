@@ -1432,3 +1432,94 @@ PIR Server 日志显示：
   2. 清理审计字段
   3. 清理 API
   4. 为下一阶段真实 PIR 集成前做一次阶段收口
+
+## 2026-04-19
+
+## Day 28：阶段重构最终收口完成
+
+### 完成内容
+1. **Verifier 主流程阶段化重构最终版落地**
+   - 最终将 `services/verifier/main.py` 收口为三层结构：
+     - `_run_precondition_check`
+     - `_run_crypto_verification`
+     - `execute_query` 编排器
+
+2. **前置规则层最终收口**
+   - 保持处理：
+     - 缺失票据
+     - 纪元过期
+     - 状态非 `UNUSED`
+   - 外部拒绝语义不变
+
+3. **密码学校验层最终收口**
+   - 保持处理：
+     - issuer 公钥可用性兜底
+     - RSA 验签
+     - witness 缺失检查
+     - binding_tag 缺失检查
+     - binding consistency check
+     - invalid binding material 兜底
+
+4. **后端桥接层异常分类最终收口**
+   - `call_pir_server()` 当前已明确区分：
+     - `timeout`
+     - `http_error_<code>`
+     - `connection_error`
+     - `unknown_error`
+
+5. **审计异步投递最终收口**
+   - `dispatch_audit_log()` 增加 `raise_for_status()`
+   - 保持：
+     - Verifier 只投递业务快照
+     - `prev_hash / entry_mac` 真实链式注入继续由 Auditor 负责
+
+6. **API 文案契约最终收口**
+   - `query_ticket_state()` 的非法 SN 返回：
+     - `Invalid SN format: must be 64-char hex`
+
+### 最终回归验收
+
+#### 1. Day 27 争议闭环回归
+执行：
+- `python scripts/test_day27_dispute_resolution.py`
+
+结果：
+- drop / PENDING / CONSUMED / FAILED / replay 全部通过
+- 证明最终版 verifier 主链行为保持一致
+
+#### 2. Day 26 Auditor 查询接口回归
+执行：
+- `python scripts/test_day26_auditor_trace.py`
+
+结果：
+- 按 `SN` 追溯通过
+- 正确 `c_q` 一致性通过
+- 伪造 `c_q` 一致性拦截通过
+
+#### 3. Day 25 审计链回归
+执行：
+- `python scripts/test_day25_audit_chain.py`
+
+结果：
+- 真实账本完整性验证通过
+- 篡改副本仍可被审计链识别
+
+### 关键结论
+- Day 28 的阶段重构已最终完成
+- 当前最终版 `services/verifier/main.py` 已通过高强度回归验证
+- 当前重构真正达到了：
+  - 内部更清晰
+  - 外部无感知
+  - 核心票据 / 验证 / 审计链路稳定
+
+### 当前限制 / 备注
+- 当前 `lock_ttl_sec=30` 仍为原型级固定值，后续可收口进 YAML
+- 当前审计字段中仍混有核心字段与快照字段，后续可再梳理边界
+- shell 中 `deactivate` 的 CRLF / Anaconda 残留问题仍不影响本轮 Day 28 验收结论，应单独处理
+
+### 下一步建议
+- 在进入下一阶段前，先做一次总结构梳理
+- 明确：
+  1. 当前哪些能力已经固化
+  2. 哪些仍是原型级占位
+  3. 下一阶段真实 PIR / eBPF / 更强审计该如何接入

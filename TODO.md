@@ -650,6 +650,52 @@
 - [ ] 视需要把更多前置拒绝分支也纳入 Auditor 留痕
 - [ ] 视需要把 PENDING 观察从 `sleep` 升级为轮询 state 接口
 - [ ] 继续推进 Day 28：阶段重构
+### Day 28：阶段重构
+- [x] 对 `services/verifier/main.py` 完成阶段性重构
+- [x] 将 verifier 主流程拆分为：
+  - [x] `_run_precondition_check`
+  - [x] `_run_crypto_verification`
+  - [x] `execute_query` 编排器
+- [x] 清理 verifier 逻辑，同时保持外部行为不变
+- [x] 保持前置拒绝 API 契约不变：
+  - [x] `Missing Ticket in request`
+  - [x] `Invalid Ticket Signature`
+  - [x] `Missing Request Witness`
+  - [x] `Missing Binding Tag`
+  - [x] `Binding Consistency Check Failed`
+  - [x] `Invalid Binding Material`
+- [x] 保持状态机主路径不变：
+  - [x] `UNUSED -> PENDING -> CONSUMED`
+  - [x] `UNUSED -> PENDING -> FAILED`
+- [x] 保持关键状态流转日志不变
+- [x] 保持审计投递仍由 Verifier 异步发起、由 Auditor 负责真实链式注入
+- [x] `dispatch_audit_log()` 增加 `raise_for_status()`
+- [x] `_run_crypto_verification()` 补回 issuer 公钥可用性兜底
+- [x] `query_ticket_state()` 恢复完整错误文案：
+  - [x] `Invalid SN format: must be 64-char hex`
+- [x] `call_pir_server()` 恢复细粒度异常分类：
+  - [x] `timeout`
+  - [x] `http_error_<code>`
+  - [x] `connection_error`
+  - [x] `unknown_error`
+
+### Day 28 验收结果
+- [x] Day 27 争议闭环回归通过
+- [x] Day 26 Auditor trace & cq consistency 回归通过
+- [x] Day 25 tamper-evident audit chain 回归通过
+- [x] Verifier / Auditor / PIR Server / Issuer 四服务协同链路稳定
+- [x] 最终版 `services/verifier/main.py` 已在回归后确认稳定
+
+### Day 28 结论
+- [x] Day 28 的阶段重构已完成
+- [x] 重构后内部结构更清晰
+- [x] 重构后外部 API 契约未被破坏
+- [x] 核心票据 / 验证 / 审计链路稳定
+
+### Day 28 小收尾
+- [ ] 后续可再考虑收口 `lock_ttl_sec` 到统一 YAML 配置
+- [ ] 后续可再明确审计核心字段与快照字段的边界
+- [ ] 进入下一阶段前，做一次总结构梳理
 
 ## 当前项目状态总结
 - Issuer blind-sign 已跑通
