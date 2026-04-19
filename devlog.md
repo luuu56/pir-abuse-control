@@ -1347,3 +1347,88 @@ PIR Server 日志显示：
   1. 被 drop 的请求能解释原因
   2. 进入 `PENDING` 的请求能查到处理中痕迹
   3. `CONSUMED / FAILED / replay` 能区分不同原因
+## 2026-04-19
+
+## Day 27：最小争议验证闭环验收完成
+
+### 完成内容
+1. **Day 27 验收脚本落地**
+   - 新增：
+     - `scripts/test_day27_dispute_resolution.py`
+   - 目标：
+     - 验证系统能否对关键争议场景给出最小证据支撑
+
+2. **证据提取逻辑收口**
+   - 脚本中统一使用三类证据：
+     - HTTP 响应中的 `decision / reason / ticket_state`
+     - Verifier 状态接口
+     - Auditor 审计记录存在性
+
+3. **前置拦截争议验证**
+   - 通过篡改 binding tag 构造前置拒绝场景
+   - 证明：
+     - 返回原因明确
+     - 票据状态保持 `UNUSED`
+     - 不会误吞票
+
+4. **PENDING 并发重放争议验证**
+   - 通过双请求并发争抢同一票据构造 `PENDING` 冲突
+   - 证明：
+     - replay 被阻挡
+     - 原因提示命中 `PENDING / concurrent`
+     - 票据处理中痕迹可见
+     - 首个请求最终成功转入 `CONSUMED`
+
+5. **CONSUMED 重放争议验证**
+   - 对已成功消费的票据再次重放
+   - 证明：
+     - replay 命中 `CONSUMED`
+     - Verifier 状态为 `CONSUMED`
+     - Auditor 审计账本存在记录
+
+6. **FAILED 烧毁重放争议验证**
+   - 使用 `trigger_failure_test` 触发后端失败
+   - 证明：
+     - 首次失败请求进入 `FAILED`
+     - 后续 replay 命中 `FAILED`
+     - Verifier 状态为 `FAILED`
+     - Auditor 审计账本存在记录
+
+### 运行结果
+
+#### Day 27 最小争议验证闭环
+执行：
+- `python scripts/test_day27_dispute_resolution.py`
+
+结果：
+1. 前置拦截场景 -> 通过
+2. `PENDING` 并发重放场景 -> 通过
+3. `CONSUMED` 已核销重放场景 -> 通过
+4. `FAILED` 烧毁重放场景 -> 通过
+
+关键输出：
+- `✅ 举证成功: 明确返回原因 [Binding Consistency Check Failed], 票据安全保持在 UNUSED`
+- `✅ 举证成功: 并发重放被成功阻挡, 原因 [Ticket already PENDING], 票据当前严格处于 PENDING`
+- `✅ 举证成功: 成功识别已完成重放, 原因 [Ticket already CONSUMED], 物理状态 CONSUMED, 具备底层审计哈希链`
+- `✅ 举证成功: 后端异常导致票据烧毁为 FAILED, 重放被拦截提示 [Ticket already FAILED], 具备底层审计哈希链`
+
+### 关键结论
+- Day 27 的最小争议验证闭环已通过
+- 当前系统已经具备对关键争议场景的最小证据支撑能力
+- 当前证据链可由以下三部分组成：
+  - HTTP 业务响应
+  - Verifier 状态查询
+  - Auditor 审计留痕
+
+### 当前限制 / 备注
+- 当前 `PENDING` 场景仍依赖原型级短暂等待来构造处理中重放
+- 当前前置被 drop 的请求默认不产生终态审计记录
+- shell 中 `deactivate` 的 CRLF / Anaconda 残留问题不影响本轮 Day 27 验收结果，应单独处理
+
+### 下一步建议
+- 进入 Day 28：阶段重构
+- 重点：
+  1. 清理 verifier 逻辑
+  2. 清理审计字段
+  3. 清理 API
+  4. 为下一阶段真实 PIR 集成前做一次阶段收口

@@ -600,6 +600,56 @@
 - [ ] 视需要补 `SN` 的 64-char hex 格式校验
 - [ ] 视需要将“找到即停”扩展为多事件记录列表返回
 - [ ] 继续推进 Day 27：最小争议验证闭环
+### Day 27：最小争议验证闭环
+- [x] 新增 Day 27 验收脚本：
+  - [x] `scripts/test_day27_dispute_resolution.py`
+- [x] 完成争议 1：前置拦截（Dropped Request）
+  - [x] 返回明确 `reason`
+  - [x] Verifier 状态保持 `UNUSED`
+  - [x] 不产生终态审计记录
+- [x] 完成争议 2：处理中重放（PENDING Collision）
+  - [x] replay 被拒绝
+  - [x] 原因命中 `PENDING / concurrent`
+  - [x] Verifier 状态为 `PENDING`
+  - [x] 首个请求最终成功并转入 `CONSUMED`
+- [x] 完成争议 3：已核销重放（CONSUMED Collision）
+  - [x] replay 被拒绝
+  - [x] 原因命中 `CONSUMED`
+  - [x] Verifier 状态为 `CONSUMED`
+  - [x] Auditor 审计记录存在
+- [x] 完成争议 4：后端崩溃与烧毁重放（FAILED Collision）
+  - [x] 首次失败返回 `REJECTED + FAILED`
+  - [x] replay 被拒绝
+  - [x] 原因命中 `FAILED`
+  - [x] Verifier 状态为 `FAILED`
+  - [x] Auditor 审计记录存在
+- [x] 为证据提取函数补充：
+  - [x] `timeout`
+  - [x] `raise_for_status()`
+- [x] 锁死关键业务断言：
+  - [x] Binding 失败原因
+  - [x] 首个成功请求最终为 `SUCCESS + CONSUMED`
+  - [x] 首次失败请求为 `REJECTED + FAILED + burned`
+
+### Day 27 验收结果
+- [x] 被 drop 的请求能解释原因，且状态保持 `UNUSED`
+- [x] 进入 `PENDING` 的请求能查到处理中痕迹
+- [x] 成功完成的请求能证明状态转为 `CONSUMED`
+- [x] 后端失败或异常中断的请求能证明状态转为 `FAILED`
+- [x] replay 请求能区分命中 `PENDING / CONSUMED / FAILED` 的不同原因
+- [x] 三类争议均具备最小证据支撑
+
+### Day 27 结论
+- [x] Day 27 的最小争议验证闭环已通过
+- [x] 当前系统已具备：
+  - [x] 最小状态证据
+  - [x] 最小审计证据
+  - [x] 最小业务解释证据
+
+### Day 27 小收尾
+- [ ] 视需要把更多前置拒绝分支也纳入 Auditor 留痕
+- [ ] 视需要把 PENDING 观察从 `sleep` 升级为轮询 state 接口
+- [ ] 继续推进 Day 28：阶段重构
 
 ## 当前项目状态总结
 - Issuer blind-sign 已跑通
