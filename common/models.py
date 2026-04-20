@@ -1,3 +1,4 @@
+# common/models.py
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from enum import Enum
@@ -33,12 +34,28 @@ class RequestInstance(BaseModel):
     """请求实例 r = (q, t, b, w)"""
     request_id: str = Field(..., description="Global unique tracking ID (UUID/ULID)")
     query_payload: str = Field(..., description="PIR Query Payload (Encoded string/Base64)")
-    ticket: Ticket = Field(..., description="Ticket (t)")
-    binding_tag: str = Field(..., description="Binding Tag b = HMAC(sk_t, H(q)||w) (Hex string)")
-    witness: RequestContext = Field(..., description="Context w")
+    # Day 21 起为了支持业务层联调与场景化拦截测试，ticket / binding_tag / witness 允许为空；verifier 必须显式做缺失校验。
+    ticket: Optional[Ticket] = None
+    binding_tag: Optional[str] = None
+    witness: Optional[RequestContext] = None
 
 # --- 审计与响应模型 ---
+# [Day 35] 对外接口的 PIR 结果强类型载荷
+class PIRResultPayload(BaseModel):
+    result_string: str
+    mapped_index: int
+    recovered_val: int
 
+
+class PIRResponse(BaseModel):
+    request_id: str
+    decision: Decision
+    ticket_state: Optional[TicketState] = None
+    reason: Optional[str] = None
+    data: Optional[PIRResultPayload] = None  # 告别 Optional[Any]
+
+
+# AuditRecord 保持原样，绝不提前塞 mapped_index
 class AuditRecord(BaseModel):
     """审计分录 Entry"""
     request_id: str = Field(..., description="Associated request tracking ID")
@@ -52,9 +69,33 @@ class AuditRecord(BaseModel):
     prev_hash: str
     entry_mac: str
 
-class PIRResponse(BaseModel):
-    request_id: str
-    decision: Decision
-    ticket_state: Optional[TicketState] = None  # 反馈票据最终状态
-    reason: Optional[str] = None
-    data: Optional[Any] = None
+# --- 准入原语相关模型 (Day 16 新增/修改) ---
+
+class AdmissionPayload(BaseModel):
+    """HMAC 签名的原始载荷"""
+    client_tag: str = Field(..., description="Short-lived context tag")
+    epoch_id: int = Field(..., description="Day 16 stub: currently fixed at 1")
+    difficulty: int = Field(ge=1, le=256)
+    issued_at: int
+    expires_at: int
+    server_nonce: str
+
+class AdmissionChallenge(BaseModel):
+    """下发给客户端的挑战包裹"""
+    payload: AdmissionPayload
+    hmac_sig: str  # Hex
+
+class AdmissionResponse(BaseModel):
+    """客户端提交的证明"""
+    challenge: AdmissionChallenge
+    nonce: int = Field(ge=0, lt=2**64) # 显式约束 uint64 空间，防止溢出
+
+class ChallengeRequest(BaseModel):
+    client_tag: str = Field(..., min_length=1)
+
+class IssueRequest(BaseModel):
+    blinded_message: str = Field(..., description="Blinded message (Hex string)")
+    admission_proof: AdmissionResponse  # 替换原来的 dummy_proof 占位符
+
+class IssueResponse(BaseModel):
+    blinded_signature: str = Field(..., description="Blind signature s' (Hex string, zero-padded, no '0x')")

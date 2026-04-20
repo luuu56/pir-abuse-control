@@ -1,6 +1,7 @@
 # services/pir_server/main.py
 import sys
 import asyncio
+import hashlib
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
@@ -11,41 +12,89 @@ sys.path.append(str(root_path))
 
 from common.config import load_config
 from common.logging_utils import setup_logger
+from services.pir_server.engine_adapter import (
+    call_external_pir_engine, EngineTimeoutError,
+    EngineProcessError, EngineProtocolError,
+    EngineResponseError, EngineNotFoundError
+)
 
 config = load_config()
 logger = setup_logger("pir_server", config)
 pir_cfg = config.get("pir_server", {})
 
-# 从配置中读取模拟耗时，默认 1.0 秒
-STUB_LATENCY_SEC = pir_cfg.get("stub_latency_sec", 1.0)
+ENGINE_MODE = pir_cfg.get("engine_mode", "stub")
+STUB_LATENCY = pir_cfg.get("stub_latency_sec", 1.0)
 
-app = FastAPI(title="PIR Abuse Control - PIR Server Adapter (Stub)")
+sub_cfg = pir_cfg.get("subprocess", {})
+ENGINE_CMD = sub_cfg.get("engine_cmd", ["python", "scripts/mock_external_pir.py"])
+ENGINE_TIMEOUT = sub_cfg.get("engine_timeout_sec", 15.0)
+WORKING_DIR = sub_cfg.get("working_dir", "")
 
+# [Day 31 契约]：必须与 Go 侧 NUM_ENTRIES 保持绝对一致
+DB_NUM_ENTRIES = 1024
+
+def map_query_to_index(query_payload: str, num_entries: int) -> int:
+    hash_bytes = hashlib.sha256(query_payload.encode('utf-8')).digest()
+    hash_int = int.from_bytes(hash_bytes, byteorder='big')
+    return hash_int % num_entries
+
+app = FastAPI(title="PIR Abuse Control - PIR Server Adapter")
 
 class PIRQueryRequest(BaseModel):
-    """
-    【Stub 协议声明】
-    当前仅为 Python 控制层到 PIR 适配层的临时通信协议。
-    后续对接真实 Go SimplePIR 时，可能演进为包含 query_id, execution_metadata 等的复杂结构。
-    """
     query_payload: str
-
 
 @app.post("/api/v1/pir/query")
 async def execute_pir_query(req: PIRQueryRequest):
-    logger.info(f"Received PIR query payload: {req.query_payload[:20]}...")
+    logger.info(f"Received query [{req.query_payload[:15]}...]. Mode: {ENGINE_MODE}")
 
-    # 使用配置驱动的模拟耗时
-    await asyncio.sleep(STUB_LATENCY_SEC)
+    # 联动 1：计算映射
+    pir_index = map_query_to_index(req.query_payload, DB_NUM_ENTRIES)
 
-    if req.query_payload == "trigger_failure_test":
-        logger.error("Simulated crash triggered by payload!")
-        raise HTTPException(status_code=500, detail="Simulated PIR backend crash")
+    if ENGINE_MODE == "stub":
+        await asyncio.sleep(STUB_LATENCY)
+        if req.query_payload == "trigger_failure_test":
+            raise HTTPException(status_code=500, detail="Simulated PIR backend crash")
+        return {
+            "data": f"stub_pir_result_for_{req.query_payload[:10]}",
+            "mapped_index": pir_index,
+            "recovered_val": 0
+        }
 
-    dummy_result = f"simplepir_go_mock_result_for_{req.query_payload[:8]}"
-    logger.info(f"PIR execution completed successfully after {STUB_LATENCY_SEC}s.")
-    return {"status": "success", "data": dummy_result}
+    elif ENGINE_MODE == "subprocess":
+        try:
+            # 联动 2：传递 pir_index 并接收 3 个返回值
+            result, recovered_val, meta = await call_external_pir_engine(
+                ENGINE_CMD, ENGINE_TIMEOUT, req.query_payload, pir_index, WORKING_DIR
+            )
 
+            # 打印 engine_meta，不浪费宝贵的分析数据
+            logger.info(f"External PIR engine executed successfully. Meta: {meta}")
+
+            # 联动 3：同时返回给上层
+            return {
+                "data": result,
+                "mapped_index": pir_index,
+                "recovered_val": recovered_val
+            }
+
+        except EngineTimeoutError as e:
+            logger.error(f"[Timeout] {e}")
+            raise HTTPException(status_code=504, detail="Gateway Timeout")
+        except EngineProtocolError as e:
+            logger.error(f"[Protocol Error] {e}")
+            raise HTTPException(status_code=502, detail="Bad Gateway")
+        except EngineNotFoundError as e:
+            logger.error(f"[Missing Engine] {e}")
+            raise HTTPException(status_code=503, detail="Service Unavailable")
+        except EngineProcessError as e:
+            logger.error(f"[Process Crash] {e}")
+            raise HTTPException(status_code=500, detail="Internal Server Error")
+        except EngineResponseError as e:
+            logger.error(f"[Engine Logic Error] {e}")
+            raise HTTPException(status_code=500, detail="Internal Server Error")
+        except Exception as e:
+            logger.error(f"[Unknown Bridge Error] {e}")
+            raise HTTPException(status_code=500, detail="Internal Server Error")
 
 if __name__ == "__main__":
     uvicorn.run(app, host=pir_cfg.get("host", "127.0.0.1"), port=pir_cfg.get("port", 8003))

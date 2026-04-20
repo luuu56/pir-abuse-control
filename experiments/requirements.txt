@@ -1,0 +1,9 @@
+pytest
+pycryptodome
+pydantic
+PyYAML
+requests
+httpx
+redis
+pytest
+pytest-asyncio

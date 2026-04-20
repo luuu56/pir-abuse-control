@@ -391,3 +391,1711 @@ LOG_N=14 D=8 go test -v -run=BW
   1. Auditor HTTP 存根搭建
   2. 审计记录字段与模型对齐
   3. 后台投递方式的最小闭环验证
+
+## Day 14：blind-sign 主链路收口与核心单测通过
+
+**日期**：2026-04-17
+
+### 完成内容
+1. **blind-sign / verify 核心单测**
+   - 新增 `tests/test_crypto_core.py`
+   - 使用 `pytest` 跑通第一批核心单测
+   - 当前测试覆盖：
+     - `encode_ticket_message()` 输入边界
+     - `sigma` Base64 严格契约反例
+     - `blind_message()` 对 `m >= n` 的拒绝
+     - `integer_to_base64()` / `base64_to_integer()` round-trip
+     - blind issue -> unblind -> verify happy path
+     - 篡改 `SN / EpochID / sigma` 的拒绝路径
+
+2. **测试结果**
+   - 执行：
+     - `PYTHONPATH=. pytest -q tests/test_crypto_core.py`
+   - 结果：
+     - `6 passed in 0.86s`
+
+3. **错误码和 API 收口**
+   - 持续清理 Verifier 拒绝分支的返回语义
+   - 保持业务拒绝路径统一走：
+     - `PIRResponse(decision=REJECTED, ...)`
+   - 保持系统不可用路径（如 Issuer 公钥不可用）与业务拒绝语义分离
+   - 清理 blind-sign 主链路中的普通签名占位残留，保持 blind-sign 为唯一主线
+
+4. **与前一阶段的衔接**
+   - 当前 blind-sign 主链路已具备：
+     - 端到端联调脚本
+     - Day 12 生命周期回归
+     - Day 13 全链路正反例
+     - Day 14 核心单测
+   - 说明当前主链路已进入“可回归、可收口”的状态
+
+### 关键记录
+- 当前 Day 14 的重点不是继续扩服务数量，而是先把已有 blind-sign 主链路压实
+- 现阶段已确认：
+  - blind issue / unblind / verify / ticket object 贯通稳定
+  - Verifier -> PIR Server 网络桥接未破坏 Day 12 生命周期语义
+  - blind-sign 已不再需要普通签名占位路径
+
+### 结论
+- Day 14 的前半与后半已完成收口
+- blind-sign 主链路当前已具备稳定回归基础
+- 下一步应进入：
+  1. Auditor HTTP 存根
+  2. 审计字段与模型对齐
+  3. 后台投递与最小审计闭环验证
+
+## 2026-04-18
+
+## Day 16：Issuer challenge / verify_admission 落地完成
+
+### 完成内容
+1. **Admission 公共密码学工具落地**
+   - 在 `common/crypto_utils.py` 中新增：
+     - `canonical_json_bytes()`
+     - `compute_hmac()`
+     - `verify_pow()`
+     - `solve_pow()`
+   - 完成 PoW 前导零 bit 校验
+   - 补充 `difficulty_bits` 与 `nonce(uint64)` 边界约束
+
+2. **Admission 对象模型落地**
+   - 在 `common/models.py` 中新增：
+     - `AdmissionPayload`
+     - `AdmissionChallenge`
+     - `AdmissionResponse`
+     - `ChallengeRequest`
+   - 将 `IssueRequest` 扩展为携带：
+     - `admission_proof`
+
+3. **Issuer Admission API 落地**
+   - 完成 `POST /api/v1/issuer/challenge`
+   - 完成 `POST /api/v1/issuer/verify_admission`
+   - 在 `/issue` 中内联 admission 校验
+   - 当前校验顺序为：
+     1. HMAC 真伪校验
+     2. challenge 过期校验
+     3. Day 16 最小 `epoch_id` 校验（当前固定 1）
+     4. PoW 校验
+     5. Redis burn / anti-replay
+     6. blind sign
+
+4. **Redis Burn Semantics 落地**
+   - 使用独立 keyspace：
+     - `admission:challenge:<challenge_fingerprint>`
+   - 使用 Redis `SET nx=True ex=ttl`
+   - 同一 challenge 仅允许成功消费一次
+   - 第二次提交命中 replay / burned challenge
+
+5. **配置收口**
+   - Admission 相关参数已从 issuer 配置读取：
+     - `difficulty_bits`
+     - `challenge_ttl_sec`
+     - `grace_window_sec`
+     - `redis_prefix`
+
+### Day 16 验收脚本
+新增：
+- `scripts/test_day16_admission.py`
+
+### 验收结果
+#### Test 1：No admission proof
+- `POST /issue` 返回 `422`
+- 结论：未提供 admission proof 无法签票
+
+#### Test 2：Forged HMAC
+- `POST /verify_admission` 返回 `403`
+- 结论：伪造 challenge 被拒绝
+
+#### Test 3：Invalid PoW Nonce
+- `POST /issue` 返回 `403`
+- 结论：PoW 校验真实生效
+
+#### Test 4：Replay / Burn Semantics
+- 第一次 `/issue` 返回 `200`
+- 第二次 `/issue` 返回 `403`
+- 结论：Redis burn semantics 生效，同一 challenge 不可复用
+
+### 关键结论
+- Day 16 目标已完成：
+  - `/challenge` 已实现
+  - `/verify_admission` 已实现
+  - admission 不通过不能签票
+  - 不执行 challenge 拿不到票（已通过反例测试验证）
+
+### 当前限制 / 备注
+- `epoch_id` 当前仍为 Day 16 stub，固定为 `1`
+- `/verify_admission` 当前主要用于 Day 16 调试与验收
+- issuer 日志中当前仍打印原始 `client_tag`，后续应收口为 hash 截断值以满足日志脱敏契约
+
+### 下一步
+- 进入 Day 17：blind ticket + admission 整合
+- 目标是在不破坏现有 Ticket / Binding / Redis 生命周期契约的前提下，将 admission 与 blind issue 串成一条完整签发链
+
+## 2026-04-18
+
+## Day 17：blind ticket + admission 整合完成
+
+### 完成内容
+1. **Client 票据获取主链重构**
+   - `services/client/main.py` 中的 `acquire_ticket()` 已整合为完整签票主链：
+     1. 获取 Issuer 真实 RSA 公钥
+     2. 请求 admission challenge
+     3. 本地执行 PoW
+     4. 生成 `SN`
+     5. 构造并提交 `blinded_message + admission_proof`
+     6. 接收 blind signature
+     7. 去盲并本地验签
+     8. 输出最终 `Ticket(sn, sigma, epoch_id)`
+
+2. **Issuer 公钥获取接口落地**
+   - 在 `services/issuer/main.py` 中新增：
+     - `GET /api/v1/issuer/public_key`
+   - Client 现已不再依赖本地公钥 stub fallback
+   - 公钥来源统一收口到 Issuer 真实网络视图
+
+3. **命名收口**
+   - 将 client 配置中的 `client_id` 收口为 `client_tag`
+   - 保持与 admission 侧“短时上下文标识”的语义一致
+
+4. **Day 17 验收脚本**
+   - 新增：
+     - `scripts/test_day17_chain.py`
+       - 用于最小签票链路验收
+     - `scripts/test_day17_full_e2e.py`
+       - 用于全链路烟雾测试
+       - 覆盖：
+         - Client
+         - Admission (PoW)
+         - Issuer
+         - Binding
+         - Verifier
+         - PIR Server
+
+### 运行结果
+#### Day 17+ Full E2E Smoke Test
+执行：
+- `python scripts/test_day17_full_e2e.py`
+
+结果：
+1. Phase 1: Ticket Acquisition (PoW + Blind Sign)
+   - challenge 成功
+   - PoW 求解成功
+   - blind sign 成功
+   - 本地去盲与验签成功
+   - Ticket 获取成功
+
+2. Phase 2: Payload Binding
+   - `create_bound_request()` 成功
+   - binding tag 生成成功
+
+3. Phase 3: Verifier Execution & PIR Bridge
+   - 请求成功发送至 Verifier
+   - Verifier 返回 `decision=SUCCESS`
+   - PIR 执行成功并返回结果
+
+关键日志：
+- `Local verification passed: Signature is valid.`
+- `🎉 [PASS] Full End-to-End Flow is Functional!`
+
+### 关键结论
+- Day 17 目标已完成：
+  - admission 通过后执行 blind-sign
+  - 输出最终 ticket
+  - admission 与 blind issue 已串为一条链
+- 且该链路已在更大的主线中通过一次真实烟雾测试：
+  - `Client -> Admission -> Issuer -> Binding -> Verifier -> PIR`
+
+### 当前限制 / 备注
+- issuer / client 日志当前仍打印原始 `client_tag`
+- 后续应收口为 hash 截断值，以满足 admission 日志脱敏契约
+- `scripts/test_day17_full_e2e.py` 当前已较稳，但错误提示中仍可进一步统一从配置生成
+
+### 下一步建议
+优先继续做端到端联调 / 回归脚本收口，而不是立即深挖 Auditor。
+原因：
+- 主链刚打通，先巩固回归最划算
+- 当前项目执行规则仍是：主链路没通前，不深挖高级审计和兼容性
+## 2026-04-18
+
+## Day 18：epoch 时间窗接入完成
+
+### 完成内容
+1. **Epoch 公共契约落地**
+   - 在 `common/crypto_utils.py` 中新增：
+     - `get_current_epoch_id(epoch_duration)`
+     - `is_epoch_valid(ticket_epoch, now_ts, duration, grace)`
+   - 统一 Issuer / Verifier 的 epoch 有效性判定逻辑
+   - 为公共函数增加输入边界保护：
+     - `duration <= 0` 拒绝
+     - `grace < 0` 拒绝
+
+2. **配置层新增 epoch 参数**
+   - 在 `configs/common/base.yaml` 中新增：
+     - `epoch.duration_sec`
+     - `epoch.grace_window_sec`
+
+3. **Issuer 接入动态 epoch**
+   - `/challenge` 中不再写死 `epoch_id`
+   - 改为根据当前时间动态计算当前纪元
+   - `/issue` 在 blind sign 前增加 epoch 有效性检查
+   - 避免签发“刚拿到就已过期”的 ticket
+
+4. **Verifier 接入 epoch 前置快拒绝**
+   - `/execute` 最前面先检查 `req.ticket.epoch_id`
+   - 若明显过期，直接返回业务拒绝
+   - 不再让过期票据继续进入验签 / binding / 状态机 / PIR 路径
+
+5. **Day 18 验收脚本**
+   - 新增 / 更新：
+     - `scripts/test_day18_epoch.py`
+   - 将测试从时间敏感方案改为确定性方案：
+     - 不再使用 `epoch - 1`
+     - 改为 `epoch - 2`
+
+### 运行结果
+执行：
+- `python scripts/test_day18_epoch.py`
+
+结果：
+1. Step 1：获取当前 epoch 的 ticket 成功
+   - `✅ Acquired ticket for Epoch: 493473`
+
+2. Step 2：将 ticket 强制篡改为两个纪元之前
+   - `expired_ticket.epoch_id = ticket.epoch_id - 2`
+
+3. Verifier 返回：
+   - `Status Code: 200`
+   - `Decision: REJECTED`
+   - `Reason: Ticket epoch 493471 has expired.`
+
+4. Verifier 日志：
+   - `Fast-rejecting expired ticket epoch: 493471`
+
+### 关键结论
+- Day 18 目标已完成：
+  - epoch 已定义
+  - 票据带 EpochID
+  - verifier 检查当前 epoch
+  - 过期票据被拒
+- Day 18 未破坏 Day 17 已打通的签票主链
+- epoch 时间窗已正式进入 Ticket 与 Verifier 的验证语义
+
+### 当前限制 / 备注
+- 当前验收覆盖了“显著过期票据被拒”
+- 如后续需要，可再补一个“上一个 epoch 且处于 grace window 内可通过”的正例测试
+- issuer/client/verifier 日志中的原始 `client_tag` 仍建议后续收口为 hash 截断值
+
+### 下一步建议
+优先继续做端到端回归与联调脚本稳定化，而不是立即深挖 Auditor。
+原因：
+- 主链刚完成 admission + blind ticket + epoch 收口
+- 先保证回归稳定最划算
+
+## 2026-04-18
+
+## Day 19：binding 生成完成
+
+### 完成内容
+1. **载荷承诺生成落地**
+   - 在 `common/crypto_utils.py` 中实现：
+     - `compute_query_commitment(query_payload)`
+   - 采用：
+     - `c_q = SHA256(query_payload)`
+   - 增加输入检查：
+     - `query_payload` 必须为非空字符串
+
+2. **绑定标签生成落地**
+   - 在 `common/crypto_utils.py` 中实现：
+     - `compute_binding_tag(sk_t, c_q_hex, witness_bytes)`
+   - 当前工程约定：
+     - `b = HMAC_SHA256(sk_t, c_q_hex.encode("utf-8") || witness_bytes)`
+   - 增加边界检查：
+     - `sk_t` 必须为非空 bytes
+     - `c_q_hex` 必须为 64 字符小写 hex
+     - `witness_bytes` 必须为非空 bytes
+
+3. **客户端请求实例构造收口**
+   - 在 `services/client/main.py` 中完成：
+     - `create_bound_request(ticket, query_payload)`
+   - 当前执行流程：
+     1. Base64 解码 `ticket.sigma`
+     2. 派生 `sk_t`
+     3. 计算 `c_q`
+     4. 构造 `witness`
+     5. 规范化序列化 `witness`
+     6. 计算 `binding_tag`
+     7. 组装 `RequestInstance`
+
+4. **Day 19 验收脚本**
+   - 新增：
+     - `scripts/test_day19_binding.py`
+
+### 运行结果
+执行：
+- `python scripts/test_day19_binding.py`
+
+结果：
+1. Ticket 获取成功
+   - `✅ Ticket acquired!`
+
+2. Binding 生成成功
+   - `Binding successful. Binding Tag: ...`
+
+3. RequestInstance 结构完整
+   - `request_id` 正常
+   - `ticket` 存在且 `SN` 对齐
+   - `binding_tag` 存在，长度为 64
+   - `witness.nonce` 正常
+   - `witness.timestamp_ms` 正常
+   - `query_payload` 被正确保留
+
+关键输出：
+- `🎉 [PASS] Day 19 Acceptance Criteria Met: Request instance structure is fully formed.`
+
+### 关键结论
+- Day 19 目标已完成：
+  - `c_q = H(q)` 已生成
+  - `b = HMAC(sk_t, H(q)||w)` 已生成
+  - 请求实例结构完整形成
+- Day 19 未破坏 Day 17/18 已打通的 Ticket 获取主链
+- 当前已为 Day 20 的 verifier 侧 binding 校验准备好一致的客户端生成契约
+
+### 当前限制 / 备注
+- Day 20 必须严格复用当前 binding 契约：
+  - `c_q_hex.encode("utf-8") + witness_bytes`
+- verifier 侧若有任何大小写、序列化或 witness 字段漂移，都会导致 binding 验证失败
+- issuer/client/verifier 中原始 `client_tag` 日志仍建议后续继续收口为 hash 截断值
+
+### 下一步建议
+进入 Day 20：binding verify
+重点：
+- 在 Verifier 中重算 `c_q`
+- 重算 `binding_tag`
+- 拒绝篡改 `q / b / w`
+## 2026-04-18
+
+## Day 20：binding verify 完成
+
+### 完成内容
+1. **Verifier 侧 Binding Consistency Check 落地**
+   - 在 `services/verifier/main.py` 中实现真实 binding 校验逻辑
+   - verifier 当前不再只信任客户端提交的 `binding_tag`
+   - 而是基于请求内容重算：
+     - `c_q = H(q)`
+     - `sk_t = derive_sk_t(sigma_bytes, sn, epoch_id)`
+     - `witness_bytes = serialize_witness(witness)`
+     - `expected_binding_tag = HMAC(sk_t, c_q || w)`
+
+2. **绑定标签比较收口**
+   - 将 `req.binding_tag == expected_binding_tag` 改为：
+     - `hmac.compare_digest(req.binding_tag, expected_binding_tag)`
+   - 避免简单字符串比较
+
+3. **异常兜底补齐**
+   - 对以下情况统一返回业务拒绝，而不是炸 500：
+     - 非法 base64
+     - 缺失字段
+     - 非法 binding 材料
+   - 当前对外收口语义：
+     - `Invalid Binding Material`
+
+4. **缺失 witness 分支补齐**
+   - 若 `req.witness is None`
+   - 直接返回：
+     - `decision=REJECTED`
+     - `reason="Missing Request Witness"`
+
+5. **Day 20 验收脚本**
+   - 新增 / 收口：
+     - `scripts/test_day20_binding_verify.py`
+   - 从配置读取 verifier 地址
+   - 增加 timeout
+   - 负例先行，正例最后，避免票据被提前消费
+
+### 运行结果
+执行：
+- `python scripts/test_day20_binding_verify.py`
+
+结果：
+1. 合法 Ticket 与合法 Bound Request 生成成功
+2. 篡改 `q` -> 被拒绝
+3. 篡改 `binding_tag` -> 被拒绝
+4. 篡改 `witness.nonce` -> 被拒绝
+5. 移除 `witness` -> 被拒绝
+6. 原始合法请求 -> 成功通过并执行
+
+关键输出：
+- `✅ Defender Win: Tampered query correctly rejected.`
+- `✅ Defender Win: Tampered binding tag correctly rejected.`
+- `✅ Defender Win: Tampered witness correctly rejected.`
+- `✅ Defender Win: Missing witness correctly rejected.`
+- `✅ Genuine request correctly accepted and executed (Ticket Consumed).`
+- `🎉 [PASS] Day 20 Acceptance Criteria Met: All verification branches tested and passed!`
+
+### 关键结论
+- Day 20 目标已完成：
+  - verifier 检查 `BindConsistent`
+  - 篡改 `q / b / w` 会拒绝
+  - 缺失 `witness` 会拒绝
+  - 合法请求仍可通过
+- binding check 已从“客户端生成”推进到“verifier 真实校验”
+- Day 19–20 的 binding 链已经闭合
+
+### 当前限制 / 备注
+- 当前测试已覆盖 q/b/w/missing witness/happy path
+- 后续如需进一步强化，可增加：
+  - 非法 `ticket.sigma` 的 binding 材料异常测试
+- issuer/client/verifier 中原始 `client_tag` 日志仍建议后续继续收口为 hash 截断值
+
+### 下一步建议
+进入 Day 21：本周联调
+重点：
+- 正常请求
+- 无票据请求
+- 过期票据
+- 篡改 binding 请求
+目标：
+- 所有场景被真实区分处理
+- 收口为一份周联调 / 回归脚本
+## 2026-04-18
+
+## Day 21：本周联调完成
+
+### 完成内容
+1. **RequestInstance 模型调整**
+   - 在 `common/models.py` 中将以下字段改为 Optional：
+     - `ticket`
+     - `binding_tag`
+     - `witness`
+   - 目的：
+     - 支持业务层联调与场景化拦截测试
+     - 避免所有非法输入都在 schema 层被 422 提前拦截
+   - 同时在模型注释中明确：
+     - verifier 必须显式做缺失校验
+
+2. **Verifier 精细化拒绝分支补齐**
+   - 在 `services/verifier/main.py` 中补齐以下业务拒绝语义：
+     - `Missing Ticket in request`
+     - `Ticket epoch ... has expired.`
+     - `Missing Request Witness`
+     - `Missing Binding Tag`
+     - `Binding Consistency Check Failed`
+
+3. **Day 21 联调脚本**
+   - 新增 / 收口：
+     - `scripts/test_day21_integration.py`
+   - 从配置读取 verifier 地址与 timeout
+   - 使用断言锁死业务契约，不只做打印演示
+
+### 联调场景
+本次脚本覆盖以下四类核心场景：
+
+1. **正常请求**
+   - 获取合法 ticket
+   - 生成合法 binding
+   - 发送至 verifier
+   - 预期：`SUCCESS`
+
+2. **无票据请求**
+   - `ticket = None`
+   - 预期：`REJECTED`
+   - 原因：`Missing Ticket in request`
+
+3. **过期票据**
+   - 先 `epoch_id -= 2`
+   - 再生成 binding
+   - 预期：`REJECTED`
+   - 原因：包含 `expired`
+
+4. **篡改 binding 请求**
+   - 修改 `query_payload`
+   - 保持原 `binding_tag`
+   - 预期：`REJECTED`
+   - 原因：`Binding Consistency Check Failed`
+
+### 运行结果
+执行：
+- `python scripts/test_day21_integration.py`
+
+结果：
+- `✅ 正常请求 -> SUCCESS`
+- `✅ 缺失票据 -> 真实区分 (Missing Ticket in request)`
+- `✅ 过期票据 -> 真实区分 (Ticket expired)`
+- `✅ 篡改绑定 -> 真实区分 (Binding Consistency Check Failed)`
+- `🎉 [PASS] Day 21 Weekly Integration Complete! All scenarios distinctly handled.`
+
+### 关键结论
+- Day 21 目标已完成：
+  - 正常请求
+  - 无票据请求
+  - 过期票据
+  - 篡改 binding 请求
+  均被真实区分处理
+- 这不是单点功能测试，而是本周核心防线的场景化联调
+- 当前 Day 17–21 已形成阶段性闭环
+
+### 当前限制 / 备注
+- 当前已覆盖四类本周计划中的核心场景
+- `Missing Binding Tag` 分支已实现，但 Day 21 脚本中尚未单独作为场景覆盖
+- `scripts/test_day21_integration.py` 中仍有一个未使用的 `import time`，后续可清理
+- issuer/client/verifier 中原始 `client_tag` 日志仍建议继续收口为 hash 截断值
+
+### 下一步建议
+后续可选方向：
+1. 推进 Auditor 审计闭环
+2. 或先整理更系统的周回归 / 端到端回归套件
+
+从当前状态看，主链已经通，后续重点应放在稳定性与闭环证据，而非重构主线。
+
+## 2026-04-18
+
+## Day 22：Redis 状态表与状态查询接口收口完成
+
+### 完成内容
+1. **Redis 状态表管理器收口**
+   - 在 `services/verifier/state_manager.py` 中完善 `TicketStateManager`
+   - 状态仍保持：
+     - `UNUSED`
+     - `PENDING`
+     - `CONSUMED`
+     - `FAILED`
+
+2. **`UNUSED` 语义正式收口**
+   - 明确：
+     - `Redis miss == UNUSED`
+   - 不要求 Issuer 在签发时预写 Redis
+   - 避免将状态表错误耦合进 blind ticket 签发链
+
+3. **统一配置接入**
+   - Redis 连接参数改为优先从统一 YAML 读取：
+     - `host`
+     - `port`
+     - `db`
+   - Redis key 前缀改为从配置读取：
+     - `ticket_state_prefix`
+
+4. **Epoch 关联 TTL 落地**
+   - 终态 `CONSUMED / FAILED` 的 Redis TTL 不再使用固定保留时长占位
+   - 改为按 `epoch_id` 推导：
+     - 票据所属 epoch 结束时间
+     - `+ grace_window`
+     - `+ 600s retention buffer`
+   - `ttl_override_sec` 仅供测试 / 联调使用
+
+5. **懒初始化改造**
+   - 将 `state_manager` 从 import-time 单例改为懒初始化
+   - 避免脚本 / 模块 import 时立刻强依赖 Redis
+
+6. **Verifier 状态查询接口**
+   - 新增：
+     - `GET /api/v1/verifier/ticket_state/{sn}`
+   - 增加严格 `64-char hex` SN 校验
+   - 合法 SN 返回状态
+   - 非法 SN 返回 `400`
+
+7. **Day 22 验收脚本**
+   - 收口 `scripts/test_day22_redis_state.py`
+   - 覆盖：
+     - Redis miss 默认 `UNUSED`
+     - `PENDING` 原子占位
+     - `CONSUMED` 终态写入
+     - Epoch 驱动 TTL
+     - TTL 过期后逻辑状态回归 `UNUSED`
+
+### 运行结果
+
+#### 1. Day 22 Redis 状态表核心语义脚本
+执行：
+- `python scripts/test_day22_redis_state.py`
+
+结果：
+- Redis miss -> `UNUSED`
+- `PENDING` 原子占位成功
+- 终态写入成功
+- Redis 实际 TTL 可按 Epoch 规则推导
+- TTL 过期后 Redis key 被物理清理
+- 再次查询逻辑状态回归 `UNUSED`
+
+关键输出：
+- `✅ 验收点 1 通过: Redis Miss == UNUSED`
+- `✅ 验收点 2 通过: PENDING 原子占位成功`
+- `✅ 验收点 3 通过: 成功流转终态，且真实 TTL 严格符合 Epoch 时间窗预期`
+- `✅ 验收点 4 通过: TTL 过期后发生 Redis Miss，逻辑状态优雅回归 UNUSED`
+
+#### 2. Verifier 状态查询接口
+执行：
+- `curl -s http://127.0.0.1:8002/api/v1/verifier/ticket_state/<SN>`
+- `curl -s http://127.0.0.1:8002/api/v1/verifier/ticket_state/<invalid_sn>`
+
+结果：
+- 合法 64-char hex `SN` 返回：
+  - `{"sn":"...","ticket_state":"UNUSED"}`
+- 非法 `SN` 返回：
+  - `{"detail":"Invalid SN format: must be 64-char hex"}`
+
+### 关键结论
+- Day 22 的 Redis 状态表核心语义已落地
+- Day 22 的“verifier 可查询状态”验收已通过
+- 当前实现保持了与既有 blind ticket 主链的一致性：
+  - 不要求 Issuer 预写 `UNUSED`
+  - 状态查询与终态 TTL 均留在 verifier / Redis 侧完成
+
+### 当前限制 / 备注
+- 当前 Redis value 第一版仍只存状态字符串
+- 若后续 Auditor 对账需要更强状态可解释性，再考虑升级为结构化 JSON
+- 当前 `try_lock()` 已存在，但 Day 23 仍需正式将其收口为原子防并发验收主体
+- Verifier 启动时若 Issuer 未开启，仍会在启动日志中出现公钥抓取失败提示；这不影响 Day 22 的只读状态查询接口，但会影响 `/execute` 主链验签路径
+
+### 下一步建议
+- 进入 Day 23：原子核销正式收口
+- 重点：
+  1. 明确 `UNUSED -> PENDING` 的原子状态转换语义
+  2. 验证并发 replay 仅允许一次成功
+  3. 将短锁 TTL 视需要收口到 YAML 配置
+
+## 2026-04-18
+
+## Day 23：原子核销并发验收完成
+
+### 完成内容
+1. **原子核销验收脚本落地**
+   - 新增：
+     - `scripts/test_day23_concurrency.py`
+   - 目标：
+     - 验证同一 `SN` 在高并发下只能有一个请求成功完成 `UNUSED -> PENDING`
+
+2. **并发测试机制增强**
+   - 使用 `threading.Barrier` 作为统一起跑发令枪
+   - 避免仅靠 `sleep()` 制造“近似并发”
+   - 提升并发竞争真实性
+
+3. **回归稳定性处理**
+   - 测试开始前显式清理目标 `SN` 对应 Redis key
+   - 避免旧状态污染本轮并发验收结果
+
+4. **状态落点断言补齐**
+   - 在统计成功/失败次数之外
+   - 额外断言并发结束后票据最终状态必须为：
+     - `PENDING`
+
+### 运行结果
+
+#### Day 23 并发原子核销验收
+执行：
+- `python scripts/test_day23_concurrency.py`
+
+结果：
+- 50 个并发线程统一起跑竞争同一 `SN`
+- 成功获取锁：`1` 次
+- 原子拦截失败：`49` 次
+- 最终票据状态：`PENDING`
+
+关键输出：
+- `✅ 成功获取锁 (进入 PIR 主线): 1 次`
+- `❌ 触发原子拦截 (被 Verifier 弹回): 49 次`
+- `📌 最终票据状态: PENDING`
+- `✅ 状态落点断言通过: 最终状态稳定为 PENDING`
+
+### 关键结论
+- Day 23 的 `UNUSED -> PENDING` 原子状态转换已通过并发验收
+- 当前基于 Redis `SETNX` 的最小原子占位路线可工作
+- 当前“并发 replay 只允许一次成功”验收已通过
+
+### 当前限制 / 备注
+- 当前 Day 23 仅完成原子占位并发语义的单点验收
+- 下一步仍需在 Day 24 中把该原子占位与 verifier 主路径正式绑定
+- 当前 `lock_ttl_sec` 仍为脚本 / 调用参数，后续可视需要收口进 YAML
+
+### 下一步建议
+- 进入 Day 24：判定路径绑定原子核销
+- 重点：
+  1. 只有验证通过并成功占位的请求才允许进入 PIR
+  2. PIR 成功推进 `CONSUMED`
+  3. PIR 失败推进 `FAILED`
+  4. 前置验证失败不得改变状态
+## 2026-04-19
+
+## Day 24：判定路径绑定原子核销验收完成
+
+### 完成内容
+1. **Day 24 验收脚本落地**
+   - 新增：
+     - `scripts/test_day24_consume_semantics.py`
+   - 目标：
+     - 验证 Verifier 的判定结果与票据状态消费语义是否严格一致
+
+2. **前置失败不吞票语义确认**
+   - 确认以下分支均保持：
+     - `ticket_state = UNUSED`
+   - 覆盖场景：
+     - 缺失票据
+     - 过期票据
+     - 篡改 binding
+
+3. **成功消费语义确认**
+   - 正常请求通过后：
+     - 先 `UNUSED -> PENDING`
+     - 再 `PENDING -> CONSUMED`
+   - 对外返回：
+     - `decision = SUCCESS`
+     - `ticket_state = CONSUMED`
+
+4. **失败烧毁语义确认**
+   - PIR 后端失败时：
+     - 先 `UNUSED -> PENDING`
+     - 再 `PENDING -> FAILED`
+   - 对外返回：
+     - `decision = REJECTED`
+     - `ticket_state = FAILED`
+     - `reason` 包含 burned
+
+5. **故障注入闭环确认**
+   - 使用 `trigger_failure_test` 触发 `pir_server` 返回 500
+   - Verifier 能正确识别后端失败并将票据烧毁为 `FAILED`
+
+### 运行结果
+
+#### Day 24 判定路径绑定原子核销验收
+执行：
+- `python scripts/test_day24_consume_semantics.py`
+
+结果：
+- 正常请求 -> `SUCCESS + CONSUMED`
+- 缺失票据 -> `REJECTED + UNUSED`
+- 过期票据 -> `REJECTED + UNUSED`
+- 篡改绑定 -> `REJECTED + UNUSED`
+- PIR 后端失败 -> `REJECTED + FAILED`
+
+#### 关键日志确认
+Verifier 日志显示：
+- `UNUSED -> PENDING -> CONSUMED`
+- `UNUSED -> PENDING -> FAILED`
+
+PIR Server 日志显示：
+- `normal_query` 成功返回 200
+- `trigger_failure_test` 触发模拟崩溃并返回 500
+
+### 关键结论
+- Day 24 的“判定与消费语义一致”验收已通过
+- 当前票据状态机定义与 Verifier 主路径实现已经对齐
+- 当前状态机语义可以正式收口为：
+  - `UNUSED`：已签发但尚未进入处理流程
+  - `PENDING`：已通过前置验证并进入后端处理阶段
+  - `CONSUMED`：请求成功执行完成
+  - `FAILED`：已进入处理阶段，但后端执行失败或调用异常终止
+
+### 当前限制 / 备注
+- 当前 `/execute` 返回体已经足以证明 Day 24 语义成立
+- 如后续需要，可再补基于 `/api/v1/verifier/ticket_state/{sn}` 的状态后查复核
+- shell 中 `deactivate` 的 CRLF / Anaconda 残留问题不影响本轮 Day 24 验收结果，应单独处理
+
+### 下一步建议
+- 进入 Day 25：tamper-evident 审计日志
+- 重点：
+  1. 明确最小审计字段
+  2. 设计链式 HMAC / prev_hash
+  3. 保持 Auditor 不影响 Verifier 主返回
+
+## 2026-04-19
+
+## Day 25：tamper-evident 审计日志验收完成
+
+### 完成内容
+1. **Day 25 第一版方案定稿**
+   - 采用链式 HMAC 审计日志作为第一版篡改留痕机制
+   - 不引入更重的链式账本 / 外部公证 / 区块链式结构
+   - 保持与当前原型“小修收口”的路线一致
+
+2. **Auditor 配置收口**
+   - 在 `configs/common/base.yaml` 中新增 / 收口：
+     - `auditor.ledger_path`
+     - `auditor.hmac_secret`
+
+3. **Auditor 链式状态机落地**
+   - 在 `services/auditor/main.py` 中实现：
+     - 启动时恢复 `current_prev_hash`
+     - 读取最后一条非空账本记录恢复状态
+     - 使用 `lifespan` 托管初始化
+     - 使用 `threading.Lock()` 保护链式写入临界区
+     - 计算 `prev_hash` 与 `entry_mac`
+     - 顺序写入 `audit_ledger.jsonl`
+
+4. **MAC payload 契约固定**
+   - 当前 Day 25 第一版固定为：
+     - `sn | query_commitment | decision | timestamp_ms | prev_hash`
+   - Auditor 与本地验收脚本已使用同一契约
+
+5. **Day 25 验收脚本收口**
+   - 完成 `scripts/test_day25_audit_chain.py`
+   - 增加：
+     - `timeout`
+     - `raise_for_status()`
+     - 副本文件篡改验证
+     - 清理副本，避免污染真实账本
+
+### 运行结果
+
+#### Day 25 审计链验收
+执行：
+- `python scripts/test_day25_audit_chain.py`
+
+结果：
+1. 生成 2 条真实访问请求，构建正常审计链
+2. 真实账本完整性校验通过
+3. 在副本账本中静默篡改单条记录
+4. 再次验证时成功发现 `entry_mac` 校验失败
+5. 真实账本保持完好
+
+关键输出：
+- `✅ 完整性验证通过 (共 2 条记录)`
+- `🚨 [篡改发现] 行 2: entry_mac 校验失败`
+- `✅ 成功在副本中捕获篡改行为，真实账本保持完好。`
+
+### 关键结论
+- Day 25 的链式 HMAC 审计日志已落地
+- 当前方案已能对单条历史记录的静默篡改提供留痕能力
+- Day 25 的“每条日志都能串成防篡改链”验收已通过
+
+### 当前限制 / 备注
+- 当前安全边界默认 HMAC 密钥不泄露
+- 当前 `threading.Lock()` 仅适用于单进程原型场景
+- 当前方案主要证明“已记录账本的篡改可发现”，并不等价于更强的外部不可抵赖机制
+- 如后续需要支持多进程部署或更强威胁模型，应再升级顺序化与密钥管理方案
+
+### 下一步建议
+- 进入 Day 26：Auditor 查询接口
+- 重点：
+  1. 按 `SN` 查询
+  2. 按 `SN + c_q` 做一致性查看
+  3. 能读出前后链字段，支撑最小追溯
+## 2026-04-19
+
+## Day 26：Auditor 查询接口验收完成
+
+### 完成内容
+1. **Auditor 单条追溯接口落地**
+   - 在 `services/auditor/main.py` 中新增：
+     - `GET /api/v1/auditor/trace/{sn}`
+   - 当前用于对单条审计记录做最小追溯
+
+2. **按 SN 查询能力**
+   - 可根据票据 `SN` 在 JSONL 账本中定位对应审计记录
+   - 返回：
+     - `sn`
+     - `ledger_line`
+     - `record`
+
+3. **链上下文字段回显**
+   - 接口当前显式返回：
+     - `prev_hash`
+     - `entry_mac`
+   - 用于最小链上下文查看与后续完整性校验
+
+4. **一致性查询能力**
+   - 当传入 `expected_cq` 时：
+     - 将其与账本中的 `query_commitment` 比较
+   - 返回：
+     - `cq_consistent = true / false`
+
+5. **输入与验收收口**
+   - 为 `expected_cq` 增加 64-char hex 格式校验
+   - 验收脚本前置交易增加：
+     - `timeout`
+     - `raise_for_status()`
+     - `decision == SUCCESS` 断言
+   - 明确当前返回的是“当前记录的链上下文”，不是前后邻居完整记录
+
+### 运行结果
+
+#### Day 26 Auditor 追溯与一致性接口验收
+执行：
+- `python scripts/test_day26_auditor_trace.py`
+
+结果：
+1. Client 成功发起一笔真实交易
+2. Auditor 可按 `SN` 追溯到对应账本记录
+3. 接口返回：
+   - `ledger_line`
+   - `prev_hash`
+   - `entry_mac`
+4. 使用正确 `c_q` 查询时：
+   - 一致性判定成功
+5. 使用伪造 `c_q` 查询时：
+   - 一致性判定失败
+
+关键输出：
+- `✅ 成功追溯！位于账本第 3 行`
+- `✅ 一致性判定成功：账本记录的 c_q 与预期完全匹配`
+- `✅ 一致性拦截成功：成功识破事后伪造的载荷承诺！`
+
+### 关键结论
+- Day 26 的 Auditor 查询接口已落地
+- Day 26 的“Auditor 能追溯单条请求”验收已通过
+- 当前审计系统已具备：
+  - 最小追溯能力
+  - 最小一致性核查能力
+  - 最小链上下文读取能力
+
+### 当前限制 / 备注
+- 当前接口默认一张票据只对应一条主审计记录，按 `SN` 找到即停
+- 当前返回的是链上下文字段，不是完整前后邻居记录
+- shell 中 `deactivate` 的 CRLF / Anaconda 残留问题不影响本轮 Day 26 验收结果，应单独处理
+
+### 下一步建议
+- 进入 Day 27：最小争议验证闭环
+- 重点：
+  1. 被 drop 的请求能解释原因
+  2. 进入 `PENDING` 的请求能查到处理中痕迹
+  3. `CONSUMED / FAILED / replay` 能区分不同原因
+## 2026-04-19
+
+## Day 27：最小争议验证闭环验收完成
+
+### 完成内容
+1. **Day 27 验收脚本落地**
+   - 新增：
+     - `scripts/test_day27_dispute_resolution.py`
+   - 目标：
+     - 验证系统能否对关键争议场景给出最小证据支撑
+
+2. **证据提取逻辑收口**
+   - 脚本中统一使用三类证据：
+     - HTTP 响应中的 `decision / reason / ticket_state`
+     - Verifier 状态接口
+     - Auditor 审计记录存在性
+
+3. **前置拦截争议验证**
+   - 通过篡改 binding tag 构造前置拒绝场景
+   - 证明：
+     - 返回原因明确
+     - 票据状态保持 `UNUSED`
+     - 不会误吞票
+
+4. **PENDING 并发重放争议验证**
+   - 通过双请求并发争抢同一票据构造 `PENDING` 冲突
+   - 证明：
+     - replay 被阻挡
+     - 原因提示命中 `PENDING / concurrent`
+     - 票据处理中痕迹可见
+     - 首个请求最终成功转入 `CONSUMED`
+
+5. **CONSUMED 重放争议验证**
+   - 对已成功消费的票据再次重放
+   - 证明：
+     - replay 命中 `CONSUMED`
+     - Verifier 状态为 `CONSUMED`
+     - Auditor 审计账本存在记录
+
+6. **FAILED 烧毁重放争议验证**
+   - 使用 `trigger_failure_test` 触发后端失败
+   - 证明：
+     - 首次失败请求进入 `FAILED`
+     - 后续 replay 命中 `FAILED`
+     - Verifier 状态为 `FAILED`
+     - Auditor 审计账本存在记录
+
+### 运行结果
+
+#### Day 27 最小争议验证闭环
+执行：
+- `python scripts/test_day27_dispute_resolution.py`
+
+结果：
+1. 前置拦截场景 -> 通过
+2. `PENDING` 并发重放场景 -> 通过
+3. `CONSUMED` 已核销重放场景 -> 通过
+4. `FAILED` 烧毁重放场景 -> 通过
+
+关键输出：
+- `✅ 举证成功: 明确返回原因 [Binding Consistency Check Failed], 票据安全保持在 UNUSED`
+- `✅ 举证成功: 并发重放被成功阻挡, 原因 [Ticket already PENDING], 票据当前严格处于 PENDING`
+- `✅ 举证成功: 成功识别已完成重放, 原因 [Ticket already CONSUMED], 物理状态 CONSUMED, 具备底层审计哈希链`
+- `✅ 举证成功: 后端异常导致票据烧毁为 FAILED, 重放被拦截提示 [Ticket already FAILED], 具备底层审计哈希链`
+
+### 关键结论
+- Day 27 的最小争议验证闭环已通过
+- 当前系统已经具备对关键争议场景的最小证据支撑能力
+- 当前证据链可由以下三部分组成：
+  - HTTP 业务响应
+  - Verifier 状态查询
+  - Auditor 审计留痕
+
+### 当前限制 / 备注
+- 当前 `PENDING` 场景仍依赖原型级短暂等待来构造处理中重放
+- 当前前置被 drop 的请求默认不产生终态审计记录
+- shell 中 `deactivate` 的 CRLF / Anaconda 残留问题不影响本轮 Day 27 验收结果，应单独处理
+
+### 下一步建议
+- 进入 Day 28：阶段重构
+- 重点：
+  1. 清理 verifier 逻辑
+  2. 清理审计字段
+  3. 清理 API
+  4. 为下一阶段真实 PIR 集成前做一次阶段收口
+
+## 2026-04-19
+
+## Day 28：阶段重构最终收口完成
+
+### 完成内容
+1. **Verifier 主流程阶段化重构最终版落地**
+   - 最终将 `services/verifier/main.py` 收口为三层结构：
+     - `_run_precondition_check`
+     - `_run_crypto_verification`
+     - `execute_query` 编排器
+
+2. **前置规则层最终收口**
+   - 保持处理：
+     - 缺失票据
+     - 纪元过期
+     - 状态非 `UNUSED`
+   - 外部拒绝语义不变
+
+3. **密码学校验层最终收口**
+   - 保持处理：
+     - issuer 公钥可用性兜底
+     - RSA 验签
+     - witness 缺失检查
+     - binding_tag 缺失检查
+     - binding consistency check
+     - invalid binding material 兜底
+
+4. **后端桥接层异常分类最终收口**
+   - `call_pir_server()` 当前已明确区分：
+     - `timeout`
+     - `http_error_<code>`
+     - `connection_error`
+     - `unknown_error`
+
+5. **审计异步投递最终收口**
+   - `dispatch_audit_log()` 增加 `raise_for_status()`
+   - 保持：
+     - Verifier 只投递业务快照
+     - `prev_hash / entry_mac` 真实链式注入继续由 Auditor 负责
+
+6. **API 文案契约最终收口**
+   - `query_ticket_state()` 的非法 SN 返回：
+     - `Invalid SN format: must be 64-char hex`
+
+### 最终回归验收
+
+#### 1. Day 27 争议闭环回归
+执行：
+- `python scripts/test_day27_dispute_resolution.py`
+
+结果：
+- drop / PENDING / CONSUMED / FAILED / replay 全部通过
+- 证明最终版 verifier 主链行为保持一致
+
+#### 2. Day 26 Auditor 查询接口回归
+执行：
+- `python scripts/test_day26_auditor_trace.py`
+
+结果：
+- 按 `SN` 追溯通过
+- 正确 `c_q` 一致性通过
+- 伪造 `c_q` 一致性拦截通过
+
+#### 3. Day 25 审计链回归
+执行：
+- `python scripts/test_day25_audit_chain.py`
+
+结果：
+- 真实账本完整性验证通过
+- 篡改副本仍可被审计链识别
+
+### 关键结论
+- Day 28 的阶段重构已最终完成
+- 当前最终版 `services/verifier/main.py` 已通过高强度回归验证
+- 当前重构真正达到了：
+  - 内部更清晰
+  - 外部无感知
+  - 核心票据 / 验证 / 审计链路稳定
+
+### 当前限制 / 备注
+- 当前 `lock_ttl_sec=30` 仍为原型级固定值，后续可收口进 YAML
+- 当前审计字段中仍混有核心字段与快照字段，后续可再梳理边界
+- shell 中 `deactivate` 的 CRLF / Anaconda 残留问题仍不影响本轮 Day 28 验收结论，应单独处理
+
+### 下一步建议
+- 在进入下一阶段前，先做一次总结构梳理
+- 明确：
+  1. 当前哪些能力已经固化
+  2. 哪些仍是原型级占位
+  3. 下一阶段真实 PIR / eBPF / 更强审计该如何接入
+
+## 2026-04-19
+
+## Day 29：真实主候选 PIR 正式接入完成
+
+### 完成内容
+1. **PIR Adapter 收口**
+   - `pir_server` 继续保持为 Python 控制层 / adapter
+   - 保持 `stub / subprocess` 双模式
+   - subprocess 模式下统一使用 JSON stdin/stdout 协议
+   - 未引入 Python 进程内 FFI 硬绑定
+
+2. **Go Wrapper 二进制边界收口**
+   - 在主候选仓库内建立：
+     - `pir_engine/simplepir/cmd/json_bridge`
+   - 恢复并保留以下边界验收分支：
+     - `fatal_crash_test`
+     - `bad_json_test`
+     - `status_error_test`
+   - 完成 Go 二进制边界验收，证明 Python 可稳定调度真实 Go ELF 二进制
+
+3. **真实 SimplePIR 核心接入**
+   - 不再停留在 placeholder / mock 结果
+   - 已根据主候选仓库内 `RunPIR` 的真实顺序接入最小调用链：
+     - `Init`
+     - `Setup`
+     - `Query`
+     - `Answer`
+     - `Recover`
+   - 当前 Day 29 采用固定小型 DB 作为确定性基线：
+     - `numEntries = 1024`
+     - `vals[42] = 4242`
+
+4. **协议洁净度修复**
+   - 发现真实 SimplePIR 调用期间，底层 Go 输出会污染 stdout，导致 Python 侧命中 `502 Bad Gateway`
+   - 最终通过在真实加密区局部重定向 stdout -> stderr 的方式完成净化
+   - 保证 Python 侧最终仅接收到一份 JSON 响应
+
+5. **确定性红线验收**
+   - 新增确定性 PIR 红线脚本
+   - 初始阶段该脚本能正确拦住 placeholder 假阳性
+   - 真实 SimplePIR 接入后，红线脚本成功转绿：
+     - 固定索引 `42`
+     - 成功恢复固定真值 `4242`
+
+### 验收结果
+#### Day 29（中）：Go Wrapper 边界验收通过
+1. 正常调用成功
+2. `fatal_crash_test` 被隔离并映射为 `500`
+3. `bad_json_test` 被识别并映射为 `502`
+4. `status_error_test` 被识别并映射为逻辑失败路径
+
+#### Day 29（下）：真实主候选确定性验收通过
+执行：
+- `python scripts/test_day29_deterministic_pir.py`
+
+结果：
+1. 请求成功穿透 Python adapter 与 Go wrapper
+2. 真实 SimplePIR 核心计算被执行
+3. 返回：
+   - `Decrypted value from index 42 is: 4242`
+4. 红线脚本通过，证明当前结果不再是 placeholder 假阳性
+
+### 关键结论
+- Day 29 目标已完成：
+  - 系统已能实际调用真实主候选 PIR 后端
+- 当前完成的是“真实主候选可调用”的收口，不是性能优化版实现
+- 当前仍保持既定工程边界：
+  - PIR 后端独立进程 / 微服务
+  - Python 仅作 adapter
+  - 不做进程内 FFI
+
+### 下一步
+进入后续阶段时，优先继续收口：
+1. `q -> PIR query` 的正式映射
+2. Python 与独立 PIR 后端之间的输入输出协议最终版
+3. 输出解析与错误返回路径
+4. DB / hint 生命周期与性能优化
+## 2026-04-19
+
+## Day 31：请求实例与 PIR 输入对齐（第一轮收口完成）
+
+### 完成内容
+1. **q -> PIR index 映射落地**
+   - 在 Python `pir_server` 中引入第一版映射函数
+   - 当前规则：
+     - `SHA256(query_payload) % 1024`
+   - 将业务字符串请求正式映射到 Go 侧可消费的整数索引
+
+2. **Python -> Go 输入协议收口**
+   - 当前发送给独立 Go PIR 后端的 JSON 字段为：
+     - `request_id`
+     - `query_payload`
+     - `pir_input`
+     - `engine_request_type`
+   - 其中：
+     - `pir_input` 为字符串形式的 `mapped_index`
+
+3. **Go -> Python 输出协议收口**
+   - Go wrapper 当前输出字段包括：
+     - `status`
+     - `result`
+     - `recovered_val`
+     - `error_type`
+     - `error_message`
+     - `engine_meta`
+   - Python `engine_adapter.py` 当前已支持解析并返回：
+     - `result`
+     - `recovered_val`
+     - `engine_meta`
+
+4. **动态可预测数据库基线替换**
+   - 当前 Go wrapper 已从 Day 29 固定基线：
+     - `vals[42] = 4242`
+   - 升级为 Day 31 动态规则：
+     - `vals[i] = i * 101`
+   - Go 侧新增动态自验：
+     - `expectedVal = queryIndex * 101`
+     - 若恢复值不匹配，则返回 `crypto_error`
+
+5. **上层返回结构增强**
+   - `/api/v1/pir/query` 当前对上层返回：
+     - `data`
+     - `mapped_index`
+     - `recovered_val`
+   - 使 Day 31 验收不再依赖字符串观察，而可基于结构化字段断言
+
+6. **Day 31 动态映射验收脚本通过**
+   - 当前已通过：
+     - `query_apple`
+     - `query_banana`
+     - `user_12345`
+   - 每条测试均验证：
+     1. `mapped_index` 与 Python 本地哈希预测一致
+     2. `recovered_val` 与 `mapped_index * 101` 一致
+
+### 验收结果
+执行：
+- `python scripts/test_day31_dynamic_mapping.py`
+
+结果：
+- `3/3 Passed`
+
+关键输出：
+- `Pass: Index mapped to 447, recovered crypto value 45147`
+- `Pass: Index mapped to 188, recovered crypto value 18988`
+- `Pass: Index mapped to 322, recovered crypto value 32522`
+
+### 关键结论
+- Day 31 第一轮目标已达成：
+  - 请求实例已能驱动真实 PIR 查询
+- 当前系统已从 Day 29 固定索引基线推进到：
+  - `q -> mapped_index -> recovered_val`
+  的第一版动态协议链路
+- 当前主线验收脚本应切换为：
+  - `scripts/test_day31_dynamic_mapping.py`
+
+### 备注
+- Day 29 旧脚本失败并不代表主线回退，而是因为它们验证的是固定基线合同
+- 当前 Day 31 已切换为动态映射合同，因此旧脚本不再适合作为主线验收脚本
+
+### 下一步
+后续优先继续收口：
+1. `DB_NUM_ENTRIES` / `NUM_ENTRIES` 的统一来源
+2. `engine_meta` 字段规范
+3. 错误码 / reason 文案标准化
+4. 决定是否保留固定基线模式供历史脚本继续回归
+## 2026-04-19
+
+## Day 32：主链路联调完成
+
+### 完成内容
+1. **Verifier 结果透传升级**
+   - `call_pir_server()` 已从简单成功/失败桥接升级为结构化返回：
+     - `success`
+     - `payload_or_error`
+     - `mapped_index`
+     - `recovered_val`
+   - verifier 成功分支已将真实 PIR 结果封装进 `PIRResponse.data`
+
+2. **PIR 成功 / 失败状态收敛保持一致**
+   - PIR 成功：
+     - `PENDING -> CONSUMED`
+     - `decision = SUCCESS`
+   - PIR 失败：
+     - `PENDING -> FAILED`
+     - `decision = REJECTED`
+   - 未破坏既有状态机语义
+
+3. **Auditor 后台投递继续保留**
+   - 当前审计投递仍正常挂在 background task 上
+   - 当天未强行把 `mapped_index` 扩进 auditor 模型，避免 auditor schema 阻塞主链 happy path
+
+4. **新增 Day 32 全链路验收脚本**
+   - 新增：
+     - `scripts/test_day32_full_pipeline.py`
+   - 脚本完成以下验证：
+     1. client 获取 ticket
+     2. client 构造 binding request
+     3. 请求提交 verifier
+     4. verifier 调真实 PIR
+     5. 返回结构化 `mapped_index / recovered_val`
+     6. 本地预测值与实际值一致
+
+### 验收结果
+执行：
+- `python scripts/test_day32_full_pipeline.py`
+
+结果：
+- `Status Code: 200`
+- `Decision: SUCCESS`
+- `Reason: PIR execution completed`
+
+实际返回：
+- `result_string = [REAL_SIMPLEPIR_ENGINE] Decrypted value from index 86 is: 8686`
+- `mapped_index = 86`
+- `recovered_val = 8686`
+
+本地预测：
+- `expected_index = 86`
+- `expected_val = 8686`
+
+比对结果：
+- `mapped_index` 一致
+- `recovered_val` 一致
+
+最终输出：
+- `Day 32 Success: Full pipeline from Blind-Sign to SimplePIR is verified!`
+
+### 关键结论
+- Day 32 验收已通过：
+  - 合法请求已能返回真实 PIR 结果
+- 当前系统已不再只是“模块可跑通”，而是已形成端到端主链 happy path：
+  - blind ticket
+  - admission
+  - binding
+  - verifier
+  - real PIR
+  - auditor background delivery
+
+### 下一步
+进入 Day 33 时，优先验证：
+1. 非法请求不会进入 PIR
+2. PIR 前后日志能清楚区分“被前置挡下”和“进入真实计算”
+3. 主链 happy path 不因 Day 33 的负例验证而回退
+
+## 2026-04-19
+
+## Day 33：非法请求不进入 PIR 验证完成
+
+### 完成内容
+1. **Verifier 新增轻量级运行时 metrics**
+   - 当前在 verifier 内新增：
+     - `total_requests`
+     - `blocked_before_pir`
+     - `pir_invoked`
+   - 并通过：
+     - `/api/v1/verifier/metrics`
+     对外暴露当前统计信息
+
+2. **PIR 前后探针日志落地**
+   - 在 verifier 调用底层 PIR 前增加：
+     - `🚀 [PIR_START]`
+   - 在 verifier 接收底层 PIR 返回后增加：
+     - `🏁 [PIR_END]`
+   - 当前日志可用于人工排查某个请求是否真正进入了重计算阶段
+
+3. **Day 33 负例攻击脚本完成**
+   - 新增：
+     - `scripts/test_day33_abuse_prevention.py`
+   - 当前脚本会发射：
+     1. 1 个合法请求
+     2. 1 个篡改 binding 的恶意请求
+     3. 1 个缺失 ticket 的恶意请求
+     4. 1 个 replay 请求
+
+4. **业务层与指标层双重对账**
+   - 不仅验证 `decision == REJECTED`
+   - 还通过 metrics 对账验证：
+     - 非法请求没有真正进入 `call_pir_server()` 区域
+   - 当前使用的最硬指标为：
+     - `added_pir == 1`
+
+### 验收结果
+执行：
+- `python scripts/test_day33_abuse_prevention.py`
+
+结果如下：
+
+1. 合法请求：
+   - `SUCCESS`
+   - 成功进入真实 PIR
+
+2. 篡改 binding 请求：
+   - 被拦截
+   - 原因：
+     - `Binding Consistency Check Failed`
+
+3. 缺失 ticket 请求：
+   - 被拦截
+   - 原因：
+     - `Missing Ticket in request`
+
+4. replay 请求：
+   - 被拦截
+   - 原因：
+     - `Ticket already CONSUMED`
+
+最终 metrics 对账为：
+- `Total Requests Fired : 4`
+- `Business Blocked     : 3`
+- `Actual PIR Invoked   : 1`
+
+最终输出：
+- `Day 33 Success: PIR engine is perfectly isolated from malicious traffic!`
+
+### 关键结论
+- Day 33 验收通过：
+  - 非法请求不会触发 PIR 计算
+- 当前系统已经同时具备：
+  - Day 32 的 happy path 能力
+  - Day 33 的负例隔离能力
+
+### 下一步
+后续优先进入：
+1. Day 34 功能性指标整理
+2. 汇总成功率 / 拦截率 / 进入 PIR 比例
+3. 保持 Day 32 与 Day 33 的主链与负例能力都不回退
+## 2026-04-19
+
+## Day 34：第一轮功能性指标整理完成
+
+### 完成内容
+1. **新增 Day 34 功能性指标脚本**
+   - 新增：
+     - `scripts/test_day34_functional_metrics.py`
+   - 脚本采用固定配比测试流量，而非随机概率压测
+   - 当前测试波次为：
+     1. 5 个正常请求
+     2. 3 个 replay 攻击
+     3. 1 个 binding 篡改请求
+     4. 1 个伪造签名请求
+
+2. **基于 metrics 做 PIR 进入比例对账**
+   - 当前继续复用 verifier 的内存指标：
+     - `total_requests`
+     - `blocked_before_pir`
+     - `pir_invoked`
+   - 并在报表中同时打印：
+     - `Expected PIR Invocations`
+     - `Actual PIR Engine Invoked`
+
+3. **功能性指标报表输出完成**
+   - 当前脚本会输出以下指标：
+     - 正常成功率
+     - replay 拦截率
+     - binding 错误拦截率
+     - signature 伪造拦截率
+     - PIR 进入比例
+
+### 验收结果
+执行：
+- `python scripts/test_day34_functional_metrics.py`
+
+初始 metrics：
+- `{'total_requests': 0, 'pir_invoked': 0, 'blocked_before_pir': 0, 'block_ratio_percent': 0.0}`
+
+最终 metrics：
+- `{'total_requests': 10, 'pir_invoked': 5, 'blocked_before_pir': 5, 'block_ratio_percent': 50.0}`
+
+最终功能性指标结果：
+- `Normal Request Success Rate  : 100.00% (5/5)`
+- `Replay Interception Rate     : 100.00% (3/3)`
+- `Binding Interception Rate    : 100.00% (1/1)`
+- `Signature Interception Rate  : 100.00% (1/1)`
+- `Expected PIR Invocations     : 5`
+- `Actual PIR Engine Invoked    : 5`
+- `PIR Entry Proportion         : 50.00%`
+
+### 关键结论
+- Day 34 验收通过：
+  - 第一轮功能性指标整理完成
+- 当前系统已经同时具备：
+  - Day 32：主链 happy path
+  - Day 33：非法请求隔离
+  - Day 34：功能性指标定量化能力
+
+### 下一步
+后续优先继续收口：
+1. 失败原因进一步分类统计
+2. 功能性指标脚本与主链/攻击脚本的职责边界整理
+3. 决定哪些指标保留为常驻调试接口，哪些只保留在实验脚本中
+## 2026-04-19
+
+## Day 35：缓冲 / 修复日完成
+
+### 背景
+Day 34 已经整理出第一轮功能性指标，当前需要做一次“小修收口”，目标不是重构主架构，而是：
+1. 修复 PIR 集成细节问题
+2. 清理 wrapper
+3. 稳定主链路
+
+本轮严格遵守既有固定前提：
+- 主线仍为 `blind ticket -> admission -> binding -> verifier -> PIR -> audit`
+- blind signature 第一版仍为 RSA blind signature
+- PIR 后端仍保持独立进程 / 微服务集成
+- 状态机仍为 `UNUSED / PENDING / CONSUMED / FAILED`
+- 不扩大 eBPF 职责
+- 保持统一 YAML 配置与统一 logging
+
+### 完成内容
+1. **PIRResponse 对外返回契约强类型化**
+   - 在 `common/models.py` 中新增：
+     - `PIRResultPayload`
+   - 将：
+     - `PIRResponse.data: Optional[Any]`
+     收口为：
+     - `PIRResponse.data: Optional[PIRResultPayload]`
+
+2. **Verifier 成功路径收口**
+   - 在 `services/verifier/main.py` 中引入 `PIRResultPayload`
+   - 成功路径不再返回普通 dict
+   - 改为显式组装：
+     - `PIRResultPayload(result_string, mapped_index, recovered_val)`
+
+3. **Wrapper 类型注解收缩**
+   - 将 `call_pir_server()` 的返回类型从宽松 `Any` 收口为：
+     - `tuple[bool, str, Optional[int], Optional[int]]`
+   - 保持函数内部逻辑不扩面，不新加额外包装层
+
+4. **成功分支增加防御性检查**
+   - 新增对以下异常情况的保护：
+     - `success=True`
+     - 但 `mapped_index is None` 或 `recovered_val is None`
+   - 当前处理策略：
+     - 记录错误日志
+     - 票据转为 `FAILED`
+     - reason 收口为：
+       - `PIR execution failed, ticket burned. Error: malformed PIR response`
+   - 这样可以避免“表面成功、结果畸形”的桥接返回污染成功路径
+
+5. **保持 Auditor 契约不扩面**
+   - 明确 Day 35 不提前把 `mapped_index` 塞入 `AuditRecord`
+   - verifier 投递 auditor 的 payload 继续剔除 `mapped_index`
+   - 避免 verifier / auditor 模型错位
+
+### 回归验证
+执行：
+```bash
+python scripts/test_day34_functional_metrics.py
+```
+结果：
+
+初始 metrics 为 0，说明本次统计未受旧值污染
+最终 metrics：
+total_requests = 10
+pir_invoked = 5
+blocked_before_pir = 5
+功能性指标结果保持：
+Normal Request Success Rate = 100.00% (5/5)
+Replay Interception Rate = 100.00% (3/3)
+Binding Interception Rate = 100.00% (1/1)
+Signature Interception Rate = 100.00% (1/1)
+Expected PIR Invocations = 5
+Actual PIR Engine Invoked = 5
+PIR Entry Proportion = 50.00%
+关键判断
+Day 35 本轮修改属于“小修收口”，没有推翻既有结构
+强类型化与成功分支防御检查没有破坏 Day 34 功能性指标脚本
+当前可以确认：
+该进 PIR 的请求仍能进入 PIR
+不该进 PIR 的请求仍被挡在前面
+说明 verifier / pir_server / metrics 三者口径仍保持一致
+当前备注
+PIR Entry Proportion = 50% 的含义仍应在报告中注明：
+这是固定 10 个样本（5 合法 + 5 非法）下的进入比例
+不是一般流量分布结论
+当前尚未单独补 malformed PIR response 的定向故障注入脚本
+如后续需要，可补一条专门回归“success=true 但字段缺失”的测试
+结论
+Day 35 已完成
+当前已完成“修复 PIR 集成问题、清理 wrapper、稳定主链路”的目标
+主链继续保持稳定，可进入下一阶段
+## 2026-04-20
+
+## Day 38：eBPF 早期过滤规则（服务器版）完成
+
+### 完成内容
+1. **Day 38 服务器版路线收口**
+   - 明确继续采用：
+     - `BCC Python 绑定 + pyroute2 + TC`
+   - 不切换到 `clang + .o + tc filter add ...` 直加载路线
+   - 保持与 Day 37 的 BCC Python 验证路径一致，避免扩大手术面
+
+2. **TC 挂载范围固定**
+   - 过滤接口固定为：
+     - `eth0 ingress`
+   - 过滤目标固定为：
+     - 仅 `TCP`
+     - 仅目标端口 `8002`
+
+3. **浅层硬丢弃规则落地**
+   - 在 `scripts/tc_gateway.py` 中完成：
+     - Ethernet / IPv4 / TCP 解析
+     - `ip->ihl >= 5` 防御性检查
+     - `tcp->doff >= 5` 防御性检查
+   - 当前唯一硬丢弃规则为：
+     - `payload[0:4] == "HACK"` -> `TC_ACT_SHOT`
+   - 该规则用于表达 Day 38 第一版“最明显非法流量早丢弃”的最小落地点
+
+4. **轻量观测信号落地**
+   - 增加浅层观测：
+     - `HTTP POST detected`
+     - 前 96 字节窗口内扫描 `"ticket"` 关键词
+   - 当前 `"ticket"` 扫描仅做 trace，不参与 drop 决策
+   - 保持 eBPF 第一版只做 fast path 观测，不越界承担 verifier 语义
+
+5. **挂载脚本工程收口**
+   - 增加 `eth0` 存在性检查
+   - 挂载前清理旧 `clsact`
+   - 退出时显式 detach，并打印 cleanup 日志
+   - 保持 `bpf_trace_printk()` 仅用于 Day 38 验收观测
+
+6. **外部测试脚本落地**
+   - 新增 `scripts/day38_test_client.py`
+   - 使用 Python socket 从外部主机发流
+   - 强制要求传入服务器 `eth0` IP
+   - 明确禁止默认 `127.0.0.1`，避免误走 `lo` 接口导致无法触发 `eth0 ingress`
+
+### 验收过程
+#### Case 1：Malicious HACK Fingerprint
+- 外部主机向服务器 `eth0:8002` 发送：
+  - `HACK_ATTACK_GARBAGE_DATA`
+- 客户端视角表现为：
+  - `Connection Timeout`
+- 服务器 TC trace 明确出现：
+  - `[TC DROP] Malicious HACK fingerprint!`
+
+#### Case 2：Standard HTTP POST with ticket
+- 外部主机向：
+  - `/api/v1/verifier/execute`
+  发送标准 HTTP POST
+- 服务器 TC trace 明确出现：
+  - `[TC OBSERVE] HTTP POST detected`
+  - `[TC OBSERVE] Found 'ticket' in payload buffer`
+- Verifier 明确收到请求，并返回：
+  - `422 Unprocessable Entity`
+
+### 关键结论
+- Day 38 第一版目标已完成：
+  - eBPF/TC 能真实丢弃一类明显非法流量
+  - 正常格式 HTTP 流量能够穿过 TC 到达 verifier
+- 当前实现严格保持了既定边界：
+  - eBPF 只做轻量前置过滤
+  - 不做 Redis / blind ticket verify / binding verify / 原子核销
+  - 不把 Day 38 做成第二个 verifier
+
+### 结果解释
+- Case 2 返回 `422` 的原因不在 TC，而在于当前外部测试脚本构造的原始 HTTP 报文不完整，body 解析未完全对齐 FastAPI 的请求模型
+- 但这不影响 Day 38 验收，因为 Day 38 的判断标准是：
+  - 正常候选流量能否穿过 TC 并到达 verifier
+  - 而不是在 eBPF 层完成业务成功判定
+
+### 当前状态
+- Day 38 已完成服务器版验收
+- 当前 eBPF fast path 已具备：
+  - 浅层指纹硬丢弃
+  - 浅层 HTTP / ticket 观测
+  - 正常候选流量放行到 verifier
+
+### 下一步
+- 进入 Day 39：eBPF 与 verifier 协作
+- 目标：
+  1. 明确 fast path / full path 的协作边界
+  2. 让 eBPF 负责早拒绝明显非法流量
+  3. 让 verifier 继续承担完整验证与 consume 语义
