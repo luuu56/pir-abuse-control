@@ -2460,3 +2460,76 @@ Day 35 已完成
   1. 画两级前置验证图
   2. 写 fast path / full path 文档
   3. 收口 eBPF 与 verifier 的职责边界说明
+  4. 
+  
+## 2026-04-21
+
+## Day 42：本周重构与留档完成
+
+### 背景
+经过 Day 36–41 的连续实现与联调，当前两级前置验证架构已经具备：
+- eBPF / TC 前置轻量拦截
+- Verifier / Redis 完整业务验证与状态推进
+- Derived Block 的来源级短时联动
+- Day 41 已验证三层漏斗效果：
+  - eBPF 前置层
+  - verifier 业务拒绝层
+  - PIR 执行层
+
+因此 Day 42 的重点不再是新增功能，而是将本周已经收口的架构正式文档化，形成可维护的设计留档。
+
+### 完成内容
+1. **新增专项架构文档**
+   - 新增：
+     - `docs/architecture_defense.md`
+   - 该文档专门用于承载两级前置验证架构说明，而不再将此类内容混入 `devlog.md`
+
+2. **完成两级前置验证总览图**
+   - 在 `docs/architecture_defense.md` 中新增 Mermaid 架构图
+   - 图中明确表达：
+     - Client -> eBPF / TC Gateway -> Uvicorn / FastAPI -> Verifier -> Redis / PIR
+     - Replay Detected 后由 verifier 经 `UDP 9002` 向控制面派发生命周期短的 Derived Block
+     - 控制面再同步到 eBPF BPF Map
+
+3. **完成典型联动时序图**
+   - 在 `docs/architecture_defense.md` 中新增 Mermaid 时序图
+   - 覆盖：
+     - 正常请求完整穿透 fast path + full path
+     - replay 首次进入 verifier 并命中 `CONSUMED`
+     - 后续同源请求在 eBPF fast path 被提前 drop
+
+4. **完成 Fast Path / Full Path 文档收口**
+   - 当前文档中已明确：
+     - Fast Path（eBPF / TC）是轻量、无业务状态的网络层执行器
+     - Full Path（Verifier / Redis / PIR）是完整业务逻辑、密码学校验与状态机中心
+   - 并正式写清：
+     - eBPF 不进行深层 JSON / HTTP 业务解析
+     - eBPF 不理解 Ticket 生命周期
+     - Redis 仍是唯一业务状态真相源
+     - Derived Block 是 verifier 派生动作，而不是 eBPF 自主业务判断
+
+5. **完成体系化文档互链**
+   - 在 `docs/sequence.md` 末尾追加对 `architecture_defense.md` 的引用说明
+   - 当前 docs 体系进一步形成互补关系：
+     - `ebpf_scope.md`：eBPF 边界
+     - `sequence.md`：整体请求时序
+     - `architecture_defense.md`：两级前置验证与分层防御
+
+6. **补充 Day 41 漏斗效果文档化**
+   - 在 `docs/architecture_defense.md` 中新增“漏斗效果与统计口径”小节
+   - 正式记录：
+     - 静态恶意指纹流量主要在 eBPF 被拦截
+     - 无票据候选流量主要在 verifier 被拒绝
+     - replay 首个命中 verifier，后续大多被 eBPF Derived Block 抑制
+     - 正常流量穿透前置防线进入 PIR
+
+### 关键结论
+- Day 42 已完成本周重构与留档目标：
+  - 两级前置验证图已正式落盘
+  - fast path / full path 文档已正式落盘
+- 当前架构留档已将 Day 36–41 的实现结果系统化整理为一份独立文档
+- 后续若继续做 Day 43+ 攻击实验、基线实验与兼容性验证，可直接以该文档作为前置防御架构基准说明
+
+### 当前状态
+- 当前两级前置验证体系已经不仅“能运行”，而且已经具备可引用、可扩展、可用于论文/实验说明的正式文档化表达
+- Day 42 可视为本周 eBPF 两级架构阶段性收口完成

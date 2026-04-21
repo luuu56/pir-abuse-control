@@ -1015,6 +1015,22 @@
   - [x] `Verifier Logic Blocks = 6`
   - [x] `Penetrated to PIR = 6`
   - [x] `eBPF Gateway Drops (Approx) = 9`
+### Day 42：本周重构与留档
+- [x] 新增 `docs/architecture_defense.md`
+- [x] 完成“两级前置验证与防御架构”正式文档整理
+- [x] 在文档中落地两张 Mermaid 图：
+  - [x] 两级前置验证总览图
+  - [x] Normal / Replay + Derived Block 时序图
+- [x] 收口 Fast Path / Full Path 职责边界文档：
+  - [x] 明确 eBPF / TC 为轻量、无业务状态的 Fast Path 执行器
+  - [x] 明确 Verifier / Redis / PIR 为 Full Path 业务验证与状态机中心
+  - [x] 明确 Redis 为 Source of Truth
+  - [x] 明确 Derived Block 为 verifier 派生动作，而非 eBPF 自主业务决策
+- [x] 在 `docs/architecture_defense.md` 中补充 Day 41 漏斗效果与统计口径说明
+- [x] 在 `docs/sequence.md` 末尾追加架构文档引用说明
+- [x] Day 42 验收通过：
+  - [x] 两级前置验证图已留档
+  - [x] fast path / full path 文档已留档
 
 ## 当前项目状态总结
 - Issuer blind-sign 已跑通

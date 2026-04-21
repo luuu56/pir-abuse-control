@@ -11,3 +11,7 @@
    * **工程原则**：状态更新必须以幂等方式执行；若执行结果已返回但状态持久化失败，应记录高优先级审计异常并禁止静默成功。
 9. **[Audit]** Verifier 异步发送审计元数据至 Auditor。
 10. **[Response]** Verifier 返回结果给 Client。
+11. 
+---
+> **体系化文档参考**：  
+> 关于 Verifier 侧 L4/L7 两级协同防御的详细职责划分与联动细节，请参考 [两级前置验证与防御架构（architecture_defense.md）](architecture_defense.md)。
