@@ -5,10 +5,11 @@ import requests
 import time
 import httpx
 import hmac
+import socket
 from typing import Any, Optional
 from contextlib import asynccontextmanager
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 import uvicorn
 
 root_path = Path(__file__).resolve().parent.parent.parent
@@ -63,6 +64,24 @@ def fetch_issuer_public_key():
         issuer_public_key.update({"n": None, "e": None})
 
 
+# --- Day 40 新增：派生 L4 封禁信号 ---
+def dispatch_l4_block_signal(client_ip: str, duration_sec: int = 10):
+    """派生 L4 封禁信号，不改变 Redis 业务决策"""
+    try:
+        # 收口校验：仅处理 IPv4，遇到 IPv6 / unknown / invalid 直接跳过
+        socket.inet_aton(client_ip) 
+        if client_ip in ["127.0.0.1", "localhost"]:
+            return
+            
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        msg = f"BLOCK {client_ip} {duration_sec}".encode('utf-8')
+        sock.sendto(msg, ("127.0.0.1", 9002))
+        logger.info(f"Derived L4 block signal dispatched for IP {client_ip}")
+    except Exception:
+        # 非 IPv4 或 UDP 发送失败不影响主流程
+        pass
+
+
 async def dispatch_audit_log(record_dict: dict):
     """异步投递审计日志"""
     async with httpx.AsyncClient() as client:
@@ -82,11 +101,10 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="PIR Abuse Control - Verifier", lifespan=lifespan)
 
 # --- Day 33 新增：轻量级内存监控指标 ---
-# 边界注意：此为单进程临时监控指标，重启后清零，不适用于多 worker 强一致性监控。
 verifier_metrics = {
     "total_requests": 0,
     "blocked_before_pir": 0,
-    "pir_invoked": 0  # 语义：已穿越前置盾牌，真正开始调用底层 PIR 计算的请求数（包含执行过程报错的）
+    "pir_invoked": 0  # 语义：已穿越前置盾牌，真正开始调用底层 PIR 计算的请求数
 }
 
 
@@ -113,7 +131,6 @@ async def query_ticket_state(sn: str):
     return {"sn": sn, "ticket_state": state.value}
 
 
-# 修复 4：收紧类型注解，告别 Any。桥接层契约锁定。
 async def call_pir_server(query_payload: str) -> tuple[bool, str, Optional[int], Optional[int]]:
     """
     Day 32 升级：从 PIR Server 获取结构化结果并透传
@@ -205,8 +222,9 @@ def _run_crypto_verification(req: RequestInstance, expected_c_q: str) -> PIRResp
 # ---------------------------------------------------------
 # 主业务编排 (Orchestration)
 # ---------------------------------------------------------
+# 【Day 40】添加了 request: Request 参数，用于提取真实的客户端 IP
 @app.post("/api/v1/verifier/execute", response_model=PIRResponse)
-async def execute_query(req: RequestInstance, background_tasks: BackgroundTasks):
+async def execute_query(req: RequestInstance, request: Request, background_tasks: BackgroundTasks):
     logger.info(f"Received request {req.request_id}...")
     sm = get_state_manager()
 
@@ -217,6 +235,13 @@ async def execute_query(req: RequestInstance, background_tasks: BackgroundTasks)
     if pre_err:
         logger.warning(f"Request {req.request_id} REJECTED: {pre_err.reason}")
         verifier_metrics["blocked_before_pir"] += 1
+        
+        # 【Day 40 核心】：明确命中 CONSUMED 状态的重放攻击，派生一个 L4 Fast-Path 封禁指令
+        if pre_err.ticket_state == TicketState.CONSUMED:
+            client_ip = request.client.host if request.client else "unknown"
+            logger.warning(f"Replay detected. Deriving short-term L4 block for source: {client_ip}")
+            dispatch_l4_block_signal(client_ip, duration_sec=10)
+            
         return pre_err
 
     # Step 2: 准备承诺并运行密码学校验
@@ -249,7 +274,6 @@ async def execute_query(req: RequestInstance, background_tasks: BackgroundTasks)
 
     # Step 5: 状态收敛与强类型数据组装 (Day 35 最终防御版)
     if success:
-        # 防御性检查：确保成功时索引字段不为 None，消灭类型缝隙
         if mapped_index is None or recovered_val is None:
             get_state_manager().mark_failed(req.ticket.sn, epoch_id=req.ticket.epoch_id)
             decision = Decision.REJECTED
@@ -261,7 +285,6 @@ async def execute_query(req: RequestInstance, background_tasks: BackgroundTasks)
             decision = Decision.SUCCESS
             reason = "PIR execution completed"
 
-            # 此时可以 100% 安全地进行强类型转换
             final_data = PIRResultPayload(
                 result_string=payload_or_error,
                 mapped_index=mapped_index,
@@ -273,7 +296,7 @@ async def execute_query(req: RequestInstance, background_tasks: BackgroundTasks)
         reason = f"PIR execution failed, ticket burned. Error: {payload_or_error}"
         final_data = None
 
-    # Step 6: 审计投递 (严守现状，不碰 mapped_index，避免 Auditor 模型爆炸)
+    # Step 6: 审计投递
     audit_payload = {
         "request_id": req.request_id,
         "sn": req.ticket.sn,

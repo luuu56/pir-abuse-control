@@ -2099,3 +2099,241 @@ Day 35 已完成
   1. 明确 fast path / full path 的协作边界
   2. 让 eBPF 负责早拒绝明显非法流量
   3. 让 verifier 继续承担完整验证与 consume 语义
+  4. 
+  ## 2026-04-20
+
+## Day 39：eBPF 与 verifier 协作联调完成
+
+### 背景
+在 Day 38 中，已经完成服务器版 eBPF/TC 轻量前置过滤，并确认：
+- `HACK` 指纹垃圾流量可在 `eth0 ingress` 被真实丢弃
+- 正常 HTTP 候选流量可继续进入 verifier
+
+因此 Day 39 的目标不是继续增强 eBPF 复杂度，而是验证两级架构是否真实协作：
+1. eBPF 早拒绝非法流量
+2. 候选流量进入 verifier
+3. verifier 做完整验证与 consume
+
+### 完成内容
+1. **新增 Day 39 联调脚本**
+   - 新增并跑通：
+     - `scripts/test_day39_two_level_defense.py`
+   - 当前脚本覆盖四类典型流量：
+     1. 纯垃圾流量
+     2. 候选 HTTP 非法流量
+     3. replay / double spend
+     4. 完整合法流量
+
+2. **Case A：eBPF 早拒绝验证**
+   - 从外部主机向服务器 `8002` 发送：
+     - `HACK_ATTACK_GARBAGE_DATA`
+   - 客户端视角表现为超时
+   - TC trace 明确出现：
+     - `[TC DROP] Malicious HACK fingerprint!`
+   - 证明明显非法流量已在内核前置层被早期丢弃
+
+3. **Case B：候选流量进入 verifier 并被用户态拒绝**
+   - 构造缺失 `ticket` 的 HTTP 请求
+   - 请求成功穿过 eBPF
+   - verifier 返回：
+     - `decision=REJECTED`
+     - `ticket_state=UNUSED`
+     - `reason=Missing Ticket in request`
+   - 证明 eBPF 未误杀候选流量，业务拒绝仍由 verifier 承担
+
+4. **Case C：replay / double spend 仍由 verifier 状态机拦截**
+   - 第一枪使用真实 ticket + binding 发起请求
+   - verifier 成功推进：
+     - `UNUSED -> PENDING -> CONSUMED`
+   - 请求成功进入真实 PIR，并返回真实 SimplePIR 结果
+   - 第二枪重放同一请求后：
+     - verifier 返回 `Ticket already CONSUMED`
+   - 证明 replay 拦截语义未下沉到 eBPF，仍由用户态状态机负责
+
+5. **Case D：合法请求穿透两级防线**
+   - 获取新的真实 ticket
+   - 生成新的合法 binding
+   - 请求成功穿透 eBPF + verifier
+   - 返回：
+     - `decision=SUCCESS`
+     - `ticket_state=CONSUMED`
+     - 真实 SimplePIR 结果
+   - pir_server 日志确认：
+     - `External PIR engine executed successfully`
+
+### 关键日志对账
+#### 1. TC / eBPF
+- trace 中明确出现：
+  - `[TC DROP] Malicious HACK fingerprint!`
+  - `[TC OBSERVE] HTTP POST detected`
+  - `[TC OBSERVE] Found 'ticket' in payload buffer`
+
+#### 2. Verifier
+- 明确看到：
+  - `Missing Ticket in request`
+  - `UNUSED -> PENDING`
+  - `[PIR_START]`
+  - `[PIR_END]`
+  - `Ticket already CONSUMED`
+
+#### 3. PIR Server
+- `query_target_C` 与 `query_target_D` 均成功进入外部 SimplePIR 引擎
+- 当前返回结果不再是 stub success，而是真实解密结果
+
+### 关键结论
+- Day 39 验收通过：
+  - BPF 负责早拒绝最明显非法流量
+  - verifier 负责完整验证与 consume
+- 当前实现仍严格遵守既定边界：
+  - eBPF 第一版只做轻量前置过滤
+  - verifier 仍是唯一完整业务判定层
+- 因而 Day 39 的目标已完成：
+  - `eBPF 早拒绝非法流量`
+  - `候选流量进入 verifier`
+  - `verifier 做完整验证与 consume`
+  - `两级架构联动成功`
+
+### 当前问题 / 备注
+- verifier 日志中出现：
+  - `Auditor report failed: All connection attempts failed`
+- 说明 Auditor 服务未在本轮联调中接通
+- 该问题不影响 Day 39 主防线验收，但说明 audit 旁路当前未参与联动
+
+### 下一步
+- 进入 Day 40：前置验证与状态表联动
+- 重点：
+  1. 明确 eBPF 不单独伪造业务决策
+  2. 保持 verifier 继续使用 Redis 状态表
+  3. 进一步收口 fast path / full path 与状态机之间的职责边界
+  4. 
+  ## 2026-04-21
+
+## Day 40：前置验证与状态表联动完成
+
+### 完成内容
+1. **Day 40 职责边界收口**
+   - 明确保持：
+     - verifier / Redis 为唯一业务状态真相源
+     - eBPF 不表达 `UNUSED / PENDING / CONSUMED / FAILED`
+     - eBPF 不单独伪造业务决策
+   - Day 40 的目标不再是增强 eBPF 复杂度，而是验证：
+     - 状态判断仍留在 verifier / Redis
+     - eBPF 仅执行 verifier 派生出来的 fast-path block
+
+2. **`tc_gateway.py` 升级为动态联动执行器**
+   - 在 eBPF 程序中新增：
+     - `BPF_HASH(blocklist, u32, u64, 2048)`
+   - 当前 blocklist 语义为：
+     - key = source IP
+     - value = expire timestamp (ns)
+   - 内核态只做：
+     - 查表
+     - 未过期则 `TC_ACT_SHOT`
+   - 不在内核态做删除操作
+   - 保留 Day 38 既有静态规则：
+     - `payload[0:4] == "HACK"` -> drop
+
+3. **动态 block 作用范围收口**
+   - 关键修正：
+     - blocklist 只在 `tcp->dest == 8002` 之后生效
+   - 因而不会误伤：
+     - Issuer `8001`
+     - 其他非 verifier 端口
+   - 这保证了 Day 40 的联动语义严格限定在 verifier 入口前
+
+4. **本机控制面落地**
+   - 在 `tc_gateway.py` 中新增 UDP 控制面线程：
+     - 监听 `127.0.0.1:9002`
+   - 控制面功能：
+     - 接收 verifier 发来的 `BLOCK <ip> <duration_sec>`
+     - 将来源级短时封禁同步到 eBPF map
+     - 在用户态顺手清理过期条目
+   - 当前日志语义收口为：
+     - `[CONTROL] Derived Block Sync from verifier decision: IP ...`
+
+5. **verifier 派生信号通道落地**
+   - 在 `services/verifier/main.py` 中新增：
+     - `Request` 注入
+     - `dispatch_l4_block_signal(...)`
+   - 当前策略明确收口为：
+     - 仅当 `ticket_state == CONSUMED`
+     - 即明确 replay / double spend 场景
+     - 才派生来源级短时 L4 block
+   - `PENDING / FAILED` 当前仍只返回业务拒绝，不派生 L4 block
+
+6. **Day 40 验收脚本落地**
+   - 新增：
+     - `scripts/test_day40_derived_block.py`
+   - 验收脚本覆盖四类流量：
+     1. Case A：静态 `HACK` 指纹 drop
+     2. Case B：候选 HTTP 流量进入 verifier 并被用户态拒绝
+     3. Case C：replay 命中 `CONSUMED`，由 verifier 派生 block
+     4. Case D：同源后续新请求在 8002 入口被 eBPF fast-path drop
+
+### 验收结果
+
+#### Case A：Static Fingerprint Drop
+- 客户端视角：
+  - `Connection Timeout`
+- TC trace 出现：
+  - `[TC DROP] Static Fingerprint: HACK detected`
+- 说明 Day 38 既有静态 fast-path 防线仍正常工作
+
+#### Case B：HTTP Candidate Traffic Rejected in User Space
+- Verifier 返回：
+  - `decision=REJECTED`
+  - `ticket_state=UNUSED`
+  - `reason="Missing Ticket in request"`
+- 说明候选流量未被 eBPF 误杀，而是继续进入 verifier 后被业务拒绝
+
+#### Case C：Replay -> Redis Decision -> Derived Block
+- 第一次真实请求结果：
+  - `SUCCESS`
+- 第二次 replay 结果：
+  - `REJECTED`
+  - `reason="Ticket already CONSUMED"`
+- verifier 日志同时出现：
+  - `Replay detected. Deriving short-term L4 block for source ...`
+  - `Derived L4 block signal dispatched ...`
+- 控制面日志出现：
+  - `[CONTROL] Derived Block Sync from verifier decision: IP ...`
+- 说明业务状态判定仍在 verifier / Redis，block 是由 verifier 派生出来的，而非 eBPF 自主生成
+
+#### Case D：Post-Replay Suppression
+- 同一来源紧接着重新获取一张新 ticket
+- Issuer `8001` 正常签发新票，说明动态 block 未误伤 Issuer
+- 但该新请求发往 Verifier `8002` 时，客户端 3 秒超时
+- TC trace 连续出现：
+  - `[TC DROP] Derived Block: source IP matched short-term L4 blocklist`
+- 说明来源级短时 suppress 已在 verifier 入口前生效
+
+### 关键结论
+- Day 40 已完成：
+  - verifier 仍通过 Redis 状态机作为唯一业务真相源
+  - eBPF 不表达票据状态，也不单独伪造业务决策
+  - verifier 在命中 `CONSUMED` replay 后，派生来源级短时 L4 block
+  - eBPF 仅在 `dport=8002` 入口执行该派生 block
+- 因此 Day 40 的“前置验证与状态表联动”已经成立
+
+### 当前说明
+- 当前实现的准确语义是：
+  - “基于 verifier/Redis 决策派生出的来源级短时 dampening”
+  - 而不是“票据状态被同步进 eBPF”
+- 这意味着：
+  - 同一来源在短时窗口内的后续合法请求也会被 fast-path 抑制
+  - 当前属于保守、粗粒度的来源级防御策略
+
+### 附加收获
+- Auditor 在本轮联调中已接通
+- 日志显示：
+  - `Audit Appended ...`
+  - `/api/v1/auditor/report` 返回 `200 OK`
+- 说明 audit 旁路当前已恢复联动
+
+### 下一步
+- 进入 Day 41：前置验证效果测试
+- 重点：
+  1. 分类统计 eBPF 丢弃数量
+  2. 分类统计 verifier 丢弃数量
+  3. 统计进入 PIR 数量
+  4. 按无票据 / 格式错误 / replay / 正常流量分别测试

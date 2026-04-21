@@ -942,6 +942,54 @@
   - [x] `HACK...` 垃圾流量被 TC 真实丢弃
   - [x] 正常 HTTP POST 可穿过 TC 到达 verifier
   - [x] TC trace 中可观察到 `[TC DROP]` 与 `[TC OBSERVE]`
+### Day 39：eBPF 与 verifier 协作
+- [x] 新增并跑通 `scripts/test_day39_two_level_defense.py`
+- [x] 完成 Day 39 两级防线联调四类流量验证：
+  - [x] Case A：`HACK...` 垃圾流量命中 eBPF/TC 提前丢弃
+  - [x] Case B：HTTP 候选流量穿过 eBPF，并在 verifier 中被业务拒绝
+  - [x] Case C：真实 replay / double spend 被 verifier 状态机拦截
+  - [x] Case D：合法流量穿透 fast path + full path，并成功进入真实 PIR
+- [x] 验证两级职责边界未漂移：
+  - [x] eBPF 只做明显非法流量早拒绝
+  - [x] verifier 继续承担完整验证与 consume
+- [x] 验证 verifier 仍依赖 Redis 状态机推进：
+  - [x] `UNUSED -> PENDING -> CONSUMED`
+  - [x] replay 命中 `CONSUMED`
+- [x] 验证真实 PIR 后端在 Day 39 联调中成功被调用
+- [x] Day 39 验收通过：两级架构联动成功
+
+### Day 39 小收尾
+- [ ] Auditor 服务当前未接通，verifier 日志仍出现 `Auditor report failed`
+- [ ] 进入 Day 40：前置验证与状态表联动
+### Day 40：前置验证与状态表联动
+- [x] 保持 Redis / verifier 为唯一业务状态真相源
+- [x] 保持 eBPF 第一版不表达 `UNUSED / PENDING / CONSUMED / FAILED`
+- [x] 在 `scripts/tc_gateway.py` 中新增来源级短时 blocklist：
+  - [x] 使用 `BPF_HASH(blocklist, u32, u64, 2048)`
+  - [x] blocklist 仅对 `TCP dport=8002` 生效
+  - [x] 内核态仅判定与执行，不做状态删除
+- [x] 在 `tc_gateway.py` 中新增本机控制面：
+  - [x] 监听 `127.0.0.1:9002/UDP`
+  - [x] 接收 `BLOCK <ip> <duration_sec>` 指令
+  - [x] 将 verifier 派生的短时封禁同步到 eBPF map
+  - [x] 在用户态顺手清理过期条目
+- [x] 在 `services/verifier/main.py` 中新增派生信号通道：
+  - [x] 通过 `Request` 获取 `client_ip`
+  - [x] 新增 `dispatch_l4_block_signal(...)`
+  - [x] 仅在 `Ticket already CONSUMED` 分支派生短时 L4 block
+  - [x] 不改变 Redis 原有业务决策与 consume 语义
+- [x] 新增 `scripts/test_day40_derived_block.py`
+  - [x] Case A：静态 `HACK` 指纹 drop
+  - [x] Case B：候选 HTTP 流量进入 verifier 并被用户态拒绝
+  - [x] Case C：replay 命中 `CONSUMED`，由 verifier 派生 block
+  - [x] Case D：同源后续新请求在 8002 入口被 eBPF fast-path drop
+- [x] Day 40 验收通过：
+  - [x] verifier 仍通过 Redis 判定 replay / consume
+  - [x] 控制面出现 `Derived Block Sync from verifier decision`
+  - [x] TC trace 出现 `Derived Block: source IP matched short-term L4 blocklist`
+  - [x] 新票仍可从 Issuer(8001) 正常获取
+  - [x] 发往 Verifier(8002) 的同源后续请求被 fast-path 抑制
+- [x] Auditor 在本轮联调中已接通并成功写入审计记录
 
 ## 当前项目状态总结
 - Issuer blind-sign 已跑通
