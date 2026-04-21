@@ -38,6 +38,13 @@
 - Day 33：非法请求不进入 PIR 的隔离验证已通过
 - Day 34：第一轮功能性指标已可自动化产出并对账
 - Day 35：缓冲 / 修复日收口完成，PIR 响应类型与 verifier 防御性检查已稳定落地
+- Day 36：eBPF 第一版职责范围固定
+- Day 37：eBPF 环境搭建与最小 hello-ebpf 验证完成
+- Day 38：TC 挂载的第一版轻量前置过滤已打通
+- Day 39：eBPF fast path 与 verifier full path 两级架构联动已验证成立
+- Day 40：来源级短时 derived block 联动已成立
+- Day 41：两级前置验证漏斗效果已完成第一轮量化测试
+- Day 42：两级前置验证架构文档化与重构收口完成
 
 当前已完成：
 
@@ -81,6 +88,13 @@
 - Day 34 功能性指标脚本与固定流量体检报表
 - Day 35 `PIRResponse.data` 强类型收口为 `PIRResultPayload`
 - Day 35 verifier 成功分支 malformed PIR response 防御性检查
+- Day 36 eBPF 第一版 In-Scope / Out-of-Scope 边界固定
+- Day 37 BCC + Clang/LLVM + kprobe hello-ebpf 最小链路验证
+- Day 38 BCC Python + pyroute2 + TC / `eth0 ingress` 第一版落地
+- Day 39 eBPF fast path 与 verifier full path 联调验收
+- Day 40 verifier/Redis 派生来源级短时 block -> eBPF blocklist 联动
+- Day 41 两级前置验证漏斗统计
+- Day 42 `docs/architecture_defense.md` 与 docs 体系收口
 
 当前 Day 12 生命周期在跨服务模式下已再次通过 4 条关键验收：
 
@@ -404,7 +418,152 @@
    - 保持失败烧毁语义一致
 6. Day 35 后已再次运行 `scripts/test_day34_functional_metrics.py`，结果未回退，说明本轮收口未破坏既有主链与功能性指标口径
 
-因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、主链核心场景已完成本周联调区分验证、Redis 状态表已完成 Day 22 收口、Day 23 原子核销并发验收通过、Day 24 判定与消费语义一致性已落地、Day 25–27 审计留痕/追溯/争议闭环已形成、Day 28 verifier 内部结构已稳定收口、Day 29 Python 控制层已可实际驱动真实主候选 SimplePIR 计算、Day 31–35 已完成请求到真实 PIR 结果的协议对齐、主链 happy path、非法请求 PIR 隔离与第一轮功能性指标闭环”的阶段。
+当前 Day 36 已完成 eBPF 第一版职责范围固定：
+
+1. 当前已明确 eBPF/XDP 在本原型中的定位是“前置的 L3/L4 及极轻量级 L7 早期启发式清洗层”
+2. 不是业务判定层，也不是第二个 verifier
+3. 第一版挂载点优先级已固定为：
+   - 优先尝试 XDP
+   - 若受限于环境或可见性约束，再降级评估 TC
+4. 第一版 eBPF In-Scope 已固定为：
+   - 仅对目标端口 TCP 流量执行前置启发式过滤
+   - 有限窗口内的浅层模式检查
+   - 基于 eBPF Map 的预置 denylist 快速丢包
+5. 第一版 eBPF Out-of-Scope 已固定为：
+   - 不做 TCP 流重组
+   - 不做 HTTP/JSON 深度解析
+   - 不做 RSA 盲签名验签
+   - 不做 HMAC binding 校验
+   - 不连接 Redis
+   - 不做 replay 状态检查
+   - 不做原子核销
+   - 不做动态复杂限流
+6. 当前工程原则已写死：
+   - 如果 eBPF 无法在常数或严格受控时间内安全完成判断，则默认 `PASS` 给用户态 Verifier
+   - 不允许在内核侧编写复杂补救或循环逻辑
+
+当前 Day 37 已完成 eBPF 环境搭建与最小 hello-ebpf 验证：
+
+1. 在 WSL2 环境中，最小 eBPF 程序已成功通过 BCC + Clang/LLVM 编译、加载并执行
+2. 当前已验证通过的链路为：
+   - `scripts/hello_ebpf.py`
+   - 使用系统 Python 与 root 权限运行
+   - attach 到 `execve` 的 kprobe
+   - 通过 `bpf_trace_printk` 输出 trace
+3. 当前结论是：
+   - WSL2 当前环境具备运行最小 eBPF 程序的能力
+   - clang/llvm + BCC + kprobe 最小链路可用
+4. 当前尚未验证：
+   - XDP 数据面是否可用
+   - TC 数据面是否可用
+   - 网络包级早期过滤是否已打通
+
+当前 Day 38 已完成服务器版第一轮 TC 轻量前置过滤：
+
+1. Day 38 继续严格遵守既定边界：
+   - eBPF 第一版仅做轻量前置过滤
+   - 不做 Redis 查询
+   - 不做 blind ticket verify
+   - 不做 binding verify
+   - 不做原子核销
+   - 不做复杂 JSON 深解析
+   - 不做动态复杂限流
+2. 当前实现路线已固定为：
+   - BCC Python 绑定 + pyroute2 + TC
+   - 挂载点：`eth0 ingress`
+   - 目标流量：仅 `TCP dport=8002`
+3. 第一版规则已收口为：
+   - 硬丢弃条件：`payload[0:4] == "HACK"` -> `TC_ACT_SHOT`
+   - 轻量观测信号：
+     - `HTTP POST detected`
+     - 前 96 字节窗口内观察 `"ticket"`
+   - 除命中 `HACK` 指纹外，其余流量统一 `TC_ACT_OK`
+4. 验收结果：
+   - `HACK...` 垃圾 TCP 字节可被 TC trace 命中 `[TC DROP]`
+   - 正常 HTTP POST 到 verifier 可见 `[TC OBSERVE]`
+   - 正常 HTTP 流量可继续进入 verifier
+
+当前 Day 39 已完成两级架构联动验证：
+
+1. 已证明以下责任边界成立：
+   - Case A：`HACK...` 垃圾 TCP 流量在 `eth0 ingress` 被 eBPF/TC 提前丢弃
+   - Case B：候选 HTTP 流量不会被 eBPF 误杀，而是进入 verifier 后被业务拒绝
+   - Case C：replay / double spend 不由 eBPF 处理，而是由 verifier 状态机以 `Ticket already CONSUMED` 拒绝
+   - Case D：合法流量能够穿透 fast path + full path，最终成功进入真实 PIR 执行路径
+2. 因此已证明：
+   - eBPF fast path 与 verifier full path 的两级架构联动成功
+   - eBPF 第一版仍严格停留在轻量前置过滤边界内
+   - verifier 仍是唯一完整业务判定与 consume 承担方
+3. 当前补充说明：
+   - Day 39 中 verifier 曾两次出现 `Auditor report failed: All connection attempts failed`
+   - 该问题不影响 Day 39 “eBPF 与 verifier 协作”验收结论
+
+当前 Day 40 已完成来源级短时 derived block 联动：
+
+1. 当前实现采用“来源级短时 L4 dampening”路线：
+   - verifier 在命中明确 replay / double spend（当前仅 `Ticket already CONSUMED`）时
+   - 基于 `client_ip` 派生一条 `BLOCK <ip> <duration>` 控制指令
+   - 本机控制面将其同步到 eBPF `blocklist` map
+   - eBPF 仅在 `TCP dport=8002` 时检查该 blocklist 并执行 drop
+2. 当前准确语义为：
+   - 基于 verifier/Redis 决策派生出的来源级短时抑制
+   - 不是票据状态被同步进 eBPF
+   - 不是 eBPF 现在理解 ticket 语义
+3. 联调结果已证明：
+   - 静态 HACK 指纹仍可被 eBPF 直接丢弃
+   - 候选 HTTP 流量仍能进入 verifier，并被用户态以 `Missing Ticket in request` 拒绝
+   - 第一次请求成功消费；第二次 replay 先进入 verifier，再被 Redis 状态机判定为 `CONSUMED`，随后 verifier 派生来源级短时 block
+   - 同一来源后续的新合法请求仍可从 Issuer(8001) 正常获取新票，但发往 Verifier(8002) 时被 eBPF fast-path 提前丢弃
+4. 因此已证明：
+   - Redis / verifier 仍是业务状态 Source of Truth
+   - eBPF 没有独立伪造业务决策
+   - eBPF 与状态表联动当前以“来源级短时抑制”的形式成立
+
+当前 Day 41 已完成前置验证效果测试：
+
+1. 测试顺序已固定为：
+   - 正常流量
+   - 无票据流量
+   - 静态恶意指纹流量
+   - replay 流量
+2. 原因：
+   - Day 40 的 derived L4 block 会污染后续流量
+   - 因此 replay 必须放在最后
+3. 四类流量的实际落点已验证：
+   - 正常流量：主要进入 PIR
+   - 无票据流量：主要在 verifier 被拒绝
+   - 静态恶意指纹流量：主要在 eBPF 前置层被拦截
+   - replay 流量：首个 replay 到达 verifier 并被 Redis 状态机识别；后续 replay 大多被 eBPF derived block 提前压制
+4. 当前漏斗统计结果为：
+   - `Total Traffic Sent Attempts = 21`
+   - `HTTP Responses Received = 12`
+   - `Reached Verifier (L7) = 12`
+   - `Verifier Logic Blocks = 6`
+   - `Penetrated to PIR = 6`
+   - `eBPF Gateway Drops (Approx) = 9`
+
+当前 Day 42 已完成两级前置验证架构的文档化与重构收口：
+
+1. 已新增：
+   - `docs/architecture_defense.md`
+2. 当前文档承载内容包括：
+   - 两级前置验证总览图
+   - Fast Path / Full Path 职责划分
+   - Source of Truth 与 Derived Block 的主从关系
+   - Day 41 漏斗效果与统计口径说明
+3. 当前文档中已明确：
+   - Fast Path = eBPF / TC
+   - Full Path = Verifier / Redis / PIR
+   - Redis 仍是唯一业务状态真相源
+   - eBPF 不维护 `UNUSED / PENDING / CONSUMED / FAILED`
+   - eBPF 不单独伪造业务决策
+   - Derived Block 仅是 verifier 基于 `CONSUMED` replay 派生出的来源级短时 L4 dampening
+4. 当前还在 `docs/sequence.md` 中补入了对 `architecture_defense.md` 的引用，使 docs 体系形成互补关系：
+   - `ebpf_scope.md` 负责边界
+   - `sequence.md` 负责总体时序
+   - `architecture_defense.md` 负责两级前置验证分层防御留档
+
+因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、主链核心场景已完成本周联调区分验证、Redis 状态表已完成 Day 22 收口、Day 23 原子核销并发验收通过、Day 24 判定与消费语义一致性已落地、Day 25–27 审计留痕/追溯/争议闭环已形成、Day 28 verifier 内部结构已稳定收口、Day 29 Python 控制层已可实际驱动真实主候选 SimplePIR 计算、Day 31–35 已完成请求到真实 PIR 结果的协议对齐、主链 happy path、非法请求 PIR 隔离与第一轮功能性指标闭环、Day 36–42 已完成 eBPF 第一版边界固定、最小环境验证、TC 轻量前置过滤、derived block 联动、漏斗量化与架构留档”的阶段。
 
 ---
 
@@ -806,6 +965,104 @@ Day 34 当前指标口径说明：
 - `pir_invoked` 表示已穿过 verifier 前置验证并真正开始调用底层 PIR 的请求数
 - `PIR Entry Proportion` 表示总请求中实际进入 PIR 的比例
 
+### 19. eBPF 第一版职责边界契约（Day 36）
+当前已明确：
+
+- eBPF/XDP 在本原型中的定位是“前置的 L3/L4 及极轻量级 L7 早期启发式清洗层”
+- 不是业务判定层，也不是第二个 verifier
+
+第一版挂载点优先级固定为：
+
+- 优先尝试 XDP
+- 若受限于环境或数据面可见性/可解析性约束，再降级评估 TC
+
+第一版 eBPF In-Scope：
+
+- 仅对目标端口 TCP 流量执行前置启发式过滤
+- 有限窗口内的浅层模式检查
+- 基于 eBPF Map 的预置 denylist 快速丢包
+
+第一版 eBPF Out-of-Scope：
+
+- 不做 TCP 流重组
+- 不做 HTTP/JSON 深度解析
+- 不做 RSA 盲签名验签
+- 不做 HMAC binding 校验
+- 不连接 Redis
+- 不做 replay 状态检查
+- 不做原子核销
+- 不做动态复杂限流
+
+工程原则：
+
+- 若 eBPF 无法在常数或严格受控时间内安全完成判断，则默认 `PASS` 给用户态 Verifier
+- 不允许在内核侧编写复杂补救或循环逻辑
+
+### 20. eBPF 第一版实现与联动契约（Day 37–41）
+当前 Day 37 已验证：
+
+- WSL2 环境可运行最小 eBPF 程序
+- BCC + Clang/LLVM + kprobe 最小链路可用
+
+当前 Day 38 服务器版实现路线固定为：
+
+- BCC Python 绑定 + pyroute2 + TC
+- 挂载点：`eth0 ingress`
+- 目标流量：仅 `TCP dport=8002`
+
+第一版规则收口为：
+
+- 硬丢弃条件：`payload[0:4] == "HACK"` -> `TC_ACT_SHOT`
+- 轻量观测信号：
+  - `HTTP POST detected`
+  - 前 96 字节窗口内观察 `"ticket"`
+- 除命中 `HACK` 指纹外，其余统一 `TC_ACT_OK`
+
+Day 39 已证明两级责任边界：
+
+- eBPF fast path 负责最明显非法流量早丢弃
+- verifier full path 负责完整验证、状态机推进与 PIR 调用
+
+Day 40 已形成来源级短时 derived block 契约：
+
+- verifier 在命中明确 replay / double spend（当前仅 `Ticket already CONSUMED`）时
+- 基于 `client_ip` 派生短时 block
+- 控制面同步到 eBPF `blocklist` map
+- eBPF 仅在 `TCP dport=8002` 时检查并执行 drop
+
+该机制准确语义为：
+
+- 基于 verifier/Redis 决策派生出的来源级短时抑制
+- 不是票据状态被同步进 eBPF
+- 不是 eBPF 现在理解 ticket 语义
+
+Day 41 已形成漏斗统计口径：
+
+- `Reached Verifier (L7)` 来自服务端 `/metrics`，是 authoritative count
+- `HTTP Responses Received` 是客户端观测值
+- `eBPF Gateway Drops (Approx)` 采用实验室近似：
+  - `Total Sent Attempts - Reached Verifier`
+
+### 21. 两级前置验证架构留档契约（Day 42）
+当前已新增：
+
+- `docs/architecture_defense.md`
+
+当前文档体系分工已明确：
+
+- `ebpf_scope.md` 负责边界
+- `sequence.md` 负责总体时序
+- `architecture_defense.md` 负责两级前置验证分层防御留档
+
+当前明确：
+
+- Fast Path = eBPF / TC
+- Full Path = Verifier / Redis / PIR
+- Redis 仍是唯一业务状态真相源
+- eBPF 不维护 `UNUSED / PENDING / CONSUMED / FAILED`
+- eBPF 不单独伪造业务决策
+- Derived Block 仅是 verifier 基于 `CONSUMED` replay 派生出的来源级短时 L4 dampening
+
 ---
 
 ## 四、当前 Verifier 的真实语义边界
@@ -836,7 +1093,7 @@ Day 34 当前指标口径说明：
   - 要求 `sn` 为 64-char hex
   - Redis miss 返回 `UNUSED`
 - `/api/v1/verifier/metrics`：
-  - 用于单进程调试与 Day 33 / Day 34 验收
+  - 用于单进程调试与 Day 33 / Day 34 / Day 41 验收
   - 服务重启后计数清零
 
 当前拒绝语义已明确：
@@ -861,6 +1118,11 @@ Day 34 当前指标口径说明：
 - 当前明确保持 Auditor 契约不扩面：
   - `AuditRecord` 暂不加入 `mapped_index`
 
+当前 fast path / full path 语义：
+
+- eBPF / TC 仅负责明显非法垃圾流量早丢弃与来源级短时抑制
+- verifier 仍是唯一完整业务判定、状态机推进、PIR 放行与终态收敛承担方
+
 当前 blind-sign 语义：
 
 - blind-sign 已成为唯一主线
@@ -875,6 +1137,7 @@ Day 34 当前指标口径说明：
 - Python 与独立 PIR 后端之间的最终输入输出协议
 - 输出解析与错误返回路径标准化
 - DB / hint 生命周期与性能优化
+- XDP / TC 取舍在真实数据面条件下的进一步定型
 
 ---
 
@@ -1031,6 +1294,23 @@ Day 34 当前指标口径说明：
    - `PIRResultPayload` 强类型收口完成
    - malformed PIR response 防御性检查已生效
    - `scripts/test_day34_functional_metrics.py` 结果未回退
+31. Day 37 最小 eBPF hello 链路已通过：
+   - BCC + Clang/LLVM + kprobe + trace 输出可用
+32. Day 38 TC 轻量前置过滤验收已通过：
+   - `HACK...` 垃圾 TCP 被丢弃
+   - 正常 HTTP POST 可穿过 TC 进入 verifier
+33. Day 39 两级架构联动验收已通过：
+   - eBPF fast path 与 verifier full path 分工成立
+34. Day 40 derived block 联动验收已通过：
+   - 来源级短时抑制生效，且不干扰 8001 取票流量
+35. Day 41 漏斗效果测试已通过：
+   - `Total Traffic Sent Attempts = 21`
+   - `Reached Verifier (L7) = 12`
+   - `Penetrated to PIR = 6`
+   - `eBPF Gateway Drops (Approx) = 9`
+36. Day 42 架构留档已完成：
+   - `docs/architecture_defense.md` 已新增
+   - docs 体系互补关系已明确
 
 ### 已有脚本 / 测试
 - `scripts/test_ticket_flow.sh`
@@ -1069,6 +1349,11 @@ Day 34 当前指标口径说明：
   - 验证 Day 33 非法请求不进入 PIR
 - `scripts/test_day34_functional_metrics.py`
   - 验证 Day 34 第一轮功能性指标与 metrics 对账
+- `scripts/hello_ebpf.py`
+  - 验证 Day 37 最小 eBPF hello 链路
+- Day 38 / 39 / 40 / 41 当前联调脚本与命令流
+  - 以服务器端 TC 挂载、外部主机流量发射与 `/metrics` / trace 对账为主
+  - 当前尚未统一收口为单一固定脚本文件名
 
 ---
 
@@ -1077,7 +1362,7 @@ Day 34 当前指标口径说明：
 ### 下一阶段：端到端回归脚本 / 周回归套件
 目标：
 
-- 在 Day 21 本周联调、Day 22 状态表收口、Day 23 原子核销并发验收、Day 24 判定-消费语义验收、Day 25–27 审计闭环验收、Day 28 verifier 收口回归、Day 29 真实主候选 PIR 接入验收、Day 31–35 协议/主链/指标收口的基础上，将核心场景沉淀为可重复执行的周联调脚本 / 回归脚本
+- 在 Day 21 本周联调、Day 22 状态表收口、Day 23 原子核销并发验收、Day 24 判定-消费语义验收、Day 25–27 审计闭环验收、Day 28 verifier 收口回归、Day 29 真实主候选 PIR 接入验收、Day 31–35 协议/主链/指标收口、Day 36–42 eBPF 两级前置验证收口的基础上，将核心场景沉淀为可重复执行的周联调脚本 / 回归脚本
 - 避免后续在真实 PIR 后端进一步收口或更强审计增强阶段把当前主链路打坏
 
 建议覆盖场景：
@@ -1094,6 +1379,7 @@ Day 34 当前指标口径说明：
 10. 动态映射与结构化 PIR 结果返回
 11. 非法请求 PIR 前隔离
 12. 功能性指标与 metrics 对账
+13. eBPF fast path + verifier full path 漏斗效果
 
 需要完成：
 
@@ -1107,7 +1393,8 @@ Day 34 当前指标口径说明：
 8. 验证真实主候选 PIR 路径保持确定性通过
 9. 验证动态映射结果与 `recovered_val` 保持一致
 10. 验证非法请求不会进入 PIR
-11. 将以上场景沉淀为一份周联调脚本 / 回归脚本
+11. 验证 eBPF Gateway Drops / Reached Verifier / PIR Invoked 的漏斗统计稳定
+12. 将以上场景沉淀为一份周联调脚本 / 回归脚本
 
 ### 再下一阶段：更强审计与部署增强（后续）
 目标：
@@ -1135,6 +1422,19 @@ Day 34 当前指标口径说明：
 4. 统一输出解析与错误返回路径
 5. 收口 DB / hint 生命周期与性能优化
 
+### 再下一阶段：eBPF 第一版工程化收口（后续）
+目标：
+
+- 在不突破 Day 36 已固定边界的前提下，把当前已验证成立的 eBPF fast path 做成更稳定的工程资产
+
+需要完成：
+
+1. 继续验证 XDP / TC 在真实环境中的可用性取舍
+2. 收口 Day 38–41 的服务器联调脚本
+3. 固化 eBPF blocklist 控制面接口与生命周期
+4. 明确 derived block 的时间窗、清理机制与观测口径
+5. 保持 eBPF 永远不越界到密码学验证、Redis 查询与业务状态机承担方角色
+
 ### 当前不应轻易改动的部分
 
 以下内容已经通过文档、实现、联调与单测逐步固化，短期内不应轻易推翻：
@@ -1150,7 +1450,7 @@ Day 34 当前指标口径说明：
 - binding 第一版生成逻辑已正式进入 RequestInstance 构造路径
 - binding verify 已在 verifier 侧正式生效
 - PIR 后端仍保持独立进程 / 微服务集成方向
-- eBPF 仍只做轻量前置过滤
+- eBPF 第一版仅做轻量前置过滤，不做业务判定，不做第二个 verifier
 - 当前审计已形成最小闭环，但仍应避免在未评估前贸然重型化
 - 项目继续优先“小修收口”，避免中途大重构
 - Day 22 当前保持 `UNUSED` 为逻辑默认态，而非签发即预写 Redis
@@ -1162,6 +1462,7 @@ Day 34 当前指标口径说明：
 - Day 29 当前保持 Python 控制层通过 subprocess / JSON bridge 驱动真实主候选 PIR，不引入进程内 FFI 硬绑定
 - Day 31 当前保持 `pir_index = SHA256(q) % 1024` 作为第一版映射契约
 - Day 35 当前保持 `PIRResponse.data` 强类型收口，但不扩面 Auditor 契约
+- Day 36–42 当前保持 Fast Path / Full Path 两级分工：Redis / verifier 仍是唯一业务状态真相源，eBPF 仅承担明显非法流量前置过滤与 verifier 派生的来源级短时抑制
 
 ---
 
@@ -1194,6 +1495,13 @@ Day 34 当前指标口径说明：
 - **Day 33 非法请求 PIR 前隔离已通过验收**
 - **Day 34 第一轮功能性指标已可对账**
 - **Day 35 缓冲 / 修复日收口完成**
+- **Day 36 eBPF 第一版职责边界已固定**
+- **Day 37 最小 eBPF hello 链路已验证**
+- **Day 38 TC 轻量前置过滤已打通**
+- **Day 39 eBPF fast path 与 verifier full path 联动已验证**
+- **Day 40 derived block 联动已成立**
+- **Day 41 两级前置验证漏斗效果已完成量化测试**
+- **Day 42 两级前置验证架构文档化已完成**
 
 并已确认：
 
@@ -1219,3 +1527,9 @@ Day 34 当前指标口径说明：
 - Day 33 非法请求 PIR 前隔离通过
 - Day 34 功能性指标与 metrics 对账通过
 - Day 35 缓冲 / 修复日收口未破坏既有主链与指标口径
+- Day 37 eBPF 最小环境验证通过
+- Day 38 TC 轻量前置过滤通过
+- Day 39 两级架构联动通过
+- Day 40 verifier 派生的来源级短时抑制通过
+- Day 41 漏斗统计通过
+- Day 42 分层防御文档化完成
