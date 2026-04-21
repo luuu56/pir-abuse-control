@@ -70,7 +70,9 @@ def dispatch_l4_block_signal(client_ip: str, duration_sec: int = 10):
     try:
         # 收口校验：仅处理 IPv4，遇到 IPv6 / unknown / invalid 直接跳过
         socket.inet_aton(client_ip)
-        if client_ip in ["127.0.0.1", "localhost"]:
+        # [Day 50 修改] 引入实验配置开关，代替硬编码的本地豁免
+        allow_localhost_block = config.get("ebpf", {}).get("allow_localhost_block", False)
+        if client_ip in ["127.0.0.1", "localhost"] and not allow_localhost_block:
             return
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)

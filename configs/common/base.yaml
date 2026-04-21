@@ -45,3 +45,5 @@ epoch:
   duration_sec: 3600  # 默认 1 小时一个纪元
   grace_window_sec: 300 # 允许 5 分钟的跨纪元宽限期（可选，用于处理时钟漂移）
 
+ebpf:
+  allow_localhost_block: true

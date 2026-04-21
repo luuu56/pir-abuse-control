@@ -1237,6 +1237,65 @@
   - [x] `replay` 与 `crypto` 接近，且语义正确
 - [x] replay 模式已再次验证：
   - [x] 同一票据高并发下只允许一次成功
+### Day 50：完整方案实验
+- [x] 为 Day 50 引入本地豁免配置开关：
+  - [x] 在 `services/verifier/main.py` 中将 localhost L4 block 豁免改为配置项
+  - [x] 在 `configs/common/base.yaml` 中支持：
+    - [x] `ebpf.allow_localhost_block`
+- [x] 新增 `scripts/test_day50_full_solution.py`
+- [x] 当前实验边界固定为：
+  - [x] 完整部署：
+    - [x] blind ticket
+    - [x] binding
+    - [x] consume
+    - [x] verifier
+    - [x] eBPF
+    - [x] audit
+- [x] 当前脚本已支持：
+  - [x] 母票预加载
+  - [x] 高并发 replay flood
+  - [x] L7 / L4 分层统计
+  - [x] Host CPU / Memory 统计
+  - [x] 服务端证据闭环提示
+- [x] 当前统计指标包括：
+  - [x] 总压测耗时
+  - [x] 客户端平均观测耗时
+  - [x] 综合防御成功率
+  - [x] L7 业务拒绝占比
+  - [x] L4 疑似拦截占比
+  - [x] 成功穿透占比
+  - [x] Host CPU / Memory
+  - [x] 客户端视角状态分布
+
+### Day 50 验收结果
+- [x] 远端部署条件下完成 `5000 requests / 50 concurrency` 全链路实验
+- [x] 客户端结果：
+  - [x] `4724 x L4_OR_NET_TIMEOUT`
+  - [x] `275 x 200_REJECTED`
+  - [x] `1 x 200_SUCCESS`
+- [x] 综合防御成功率：
+  - [x] `99.98%`
+- [x] L7 业务拒绝占比：
+  - [x] `5.50%`
+- [x] L4 疑似拦截占比：
+  - [x] `94.48%`
+- [x] 成功穿透占比：
+  - [x] `0.02%`
+- [x] tc/eBPF 侧出现：
+  - [x] `[TC DROP] Derived Block: source IP matched short-term L4 blocklist`
+- [x] verifier 侧出现：
+  - [x] `Replay detected. Deriving short-term L4 block for source...`
+  - [x] `Derived L4 block signal dispatched for IP ...`
+- [x] pir_server / auditor 侧仅出现极少量早期真实触达事件
+- [x] Day 50 验收通过：完整方案协同防御闭环成立
+
+### Day 50 结论
+- [x] 当前完整方案已形成：
+  - [x] L7 verifier 吹哨
+  - [x] derived block dispatch
+  - [x] L4 eBPF/TC 接管后续抑制
+- [x] replay flood 下仅允许一次成功执行
+- [x] 后续大部分流量未继续进入高开销 PIR 路径
 
 ## 当前项目状态总结 
 - Issuer blind-sign 已跑通
@@ -1276,6 +1335,13 @@
 - Day 42 两级前置验证架构文档化与重构收口已完成
 - Day 43 replay 攻击实验已完成，串行 replay 与并发 replay storm 下均只允许一次成功
 - Day 44 batch abuse / full path 承压测试已完成，批量 abuse 请求未穿透到 PIR
+- Day 45 已完成恶意 verifier 状态篡改测试，可通过 Redis 状态与 Auditor 账本外部对账发现 ghost consumption
+- Day 46 已完成恶意服务端伪造执行记录测试，可发现跨证据源不一致与离线账本链断裂
+- Day 47 已完成 Authenticated / Verifiable PIR 兼容性验证，proof-bearing PIR response 可最小兼容透传
+- Day 48 已完成基线实验 1：无 access-control 前置保护直打 PIR 服务入口的性能基线
+- Day 49 已完成基线实验 2：仅用户态 verifier 的 L7 防线性能基线
+- Day 50 已完成完整方案实验，形成 `L7 verifier -> derived block dispatch -> L4 eBPF/TC drop` 协同防御闭环
 - 当前项目已形成：blind-sign + admission + binding + verifier + PIR + audit + eBPF fast path 的阶段性闭环
 - 当前审计已从本地日志存根推进到：链式 HMAC 留痕 + Auditor trace + 最小争议验证闭环
-- 下一阶段重点：端到端周回归脚本 / 攻击实验扩展 / PIR 协议最终收口
+- 当前实验部分已具备：基线实验、恶意客户端 replay 攻击、批量 abuse 压测、恶意服务端最小篡改检测、完整方案 replay flood 防御验证
+- 下一阶段重点：周回归脚本收口 / PIR 协议最终收口 / eBPF 工程化收口 / 更多兼容性与攻击实验扩展

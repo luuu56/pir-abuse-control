@@ -3242,3 +3242,136 @@ Day 47 共完成两类验收：
 ### 下一步
 - 进入 Day 50：基线实验 3 / 后续对照实验
 - 目标是在当前 Day 48 / Day 49 基线基础上继续完成有 eBPF 参与条件下的比较
+- 
+## 2026-04-21
+
+## Day 50：完整方案实验完成
+
+### 完成内容
+1. **Day 50 全链路协同防御脚本落地**
+   - 新增：
+     - `scripts/test_day50_full_solution.py`
+
+2. **localhost L4 block 豁免收口**
+   - 为避免直接删除 Day 40 留下的开发保险丝
+   - 在 `services/verifier/main.py` 中将 localhost 豁免改为配置开关：
+     - `ebpf.allow_localhost_block`
+   - 该开关仅用于 Day 50 实验 / 特殊联调场景
+   - 默认仍应关闭
+
+3. **完整方案实验边界固定**
+   - 当前 Day 50 覆盖完整主链：
+     - blind ticket
+     - binding
+     - consume
+     - verifier
+     - eBPF / TC
+     - audit
+   - 当前攻击模式固定为：
+     - 1 张真票为母本
+     - 高并发 replay flood
+
+4. **脚本统计口径收口**
+   - 当前脚本统计：
+     - 总压测耗时
+     - 客户端平均观测耗时
+     - 综合防御成功率
+     - L7 业务拒绝占比
+     - L4 疑似拦截占比
+     - 成功穿透占比
+     - Host CPU / Memory
+     - 客户端视角状态分布
+   - 当前明确：
+     - `L4_OR_NET_TIMEOUT / CONN_ERR`
+       仅作为与 L4 丢弃机制预期一致的近似证据
+     - 不直接替代 eBPF/TC trace 证据
+
+5. **服务端证据闭环要求固定**
+   - Day 50 验收必须额外核对：
+     1. verifier 日志：
+        - `Replay detected. Deriving short-term L4 block for source...`
+        - `Derived L4 block signal dispatched for IP ...`
+     2. tc_gateway / eBPF trace：
+        - `[TC DROP] Derived Block: source IP matched short-term L4 blocklist`
+     3. auditor / pir_server：
+        - 仅出现极少量早期真实触达事件
+
+### 运行结果
+
+#### 1. 本机打本机实验（弱协同）
+先前在本机打本机条件下：
+- 客户端侧结果主要为：
+  - `1999 x 200_REJECTED`
+  - `1 x L4_OR_NET_TIMEOUT`
+- 说明：
+  - 完整方案主链已跑通
+  - L7 为主承担方
+  - L4 仅弱介入
+
+#### 2. 远端客户端打服务器实验（正式结果）
+执行：
+- `python scripts/test_day50_full_solution.py 119.45.48.193 --requests 5000 --concurrency 50`
+
+结果：
+- 总压测耗时：
+  - `143.11 s`
+- 客户端平均观测耗时：
+  - `1426.06 ms`
+- 综合防御成功率：
+  - `99.98%`
+- 分层占比：
+  - `L7 业务拒绝占比 = 5.50%`
+  - `L4 疑似拦截占比 = 94.48%`
+  - `成功穿透占比 = 0.02%`
+
+客户端状态分布：
+- `4724 x L4_OR_NET_TIMEOUT`
+- `275 x 200_REJECTED`
+- `1 x 200_SUCCESS`
+
+### 服务端侧证据
+1. **Verifier**
+   - 出现：
+     - `Request ... REJECTED: Ticket already CONSUMED`
+     - `Replay detected. Deriving short-term L4 block for source: 220.178.180.101`
+     - `Derived L4 block signal dispatched for IP 220.178.180.101`
+
+2. **tc_gateway / eBPF**
+   - trace 中出现多条：
+     - `[TC DROP] Derived Block: source IP matched short-term L4 blocklist`
+
+3. **pir_server**
+   - 仅出现 1 次真实查询执行
+
+4. **auditor**
+   - 仅出现极少量早期真实触达事件
+   - 当前日志中仅见 1 条追加记录
+
+### 关键结论
+- Day 50 目标已完成：
+  - 完整方案实验已跑通
+  - 已验证 `blind ticket + binding + consume + verifier + eBPF + audit` 的协同闭环
+
+- 当前正式结果表明：
+  - 系统已形成：
+    - `L7 verifier -> derived block dispatch -> L4 eBPF/TC drop`
+      的协同防御路径
+  - replay flood 下仅允许 1 次成功执行
+  - 后续大部分流量已由 L4 层接管抑制
+  - 后续流量未继续大规模进入高开销 PIR 路径
+
+- 与本机打本机实验相比：
+  - 远端部署条件更能放大 derived block 生效后的 L4 接管效果
+  - 因而远端实验结果更适合作为 Day 50 正式留档结论
+
+### 当前边界 / 备注
+- 当前客户端 `L4_OR_NET_*` 仍属于近似证据，需与 verifier / tc_gateway / auditor 三侧日志联合解释
+- verifier 日志中同一来源可能重复派发 block，后续可考虑做控制面去重优化
+- 当前 CPU / Memory 指标若仅在客户端本机采集，则更多反映客户端宿主机视角，不代表服务端进程独占资源
+
+### 下一步
+- Day 48 / Day 49 / Day 50 三组实验现已形成完整对照链：
+  1. 无前置保护直打 PIR 服务入口
+  2. 只有用户态 verifier
+  3. 完整方案：L7 + L4 协同防御
+- 后续可进入总结、对照分析与论文/报告侧收口

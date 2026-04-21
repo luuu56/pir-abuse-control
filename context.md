@@ -47,6 +47,12 @@
 - Day 42：两级前置验证架构文档化与重构收口完成
 - Day 43：恶意客户端 replay 攻击实验已完成
 - Day 44：客户端批量滥用攻击与 full path 承压测试已完成
+- Day 45：恶意 verifier 状态篡改测试已完成
+- Day 46：恶意服务端伪造执行记录测试已完成
+- Day 47：Authenticated / Verifiable PIR 兼容性验证已完成
+- Day 48：基线实验 1（无 access-control 前置保护）已完成
+- Day 49：基线实验 2（仅用户态 verifier）已完成
+- Day 50：完整方案实验已完成，形成 `L7 verifier -> derived block dispatch -> L4 eBPF/TC drop` 协同防御闭环
 
 当前已完成：
 
@@ -99,6 +105,12 @@
 - Day 42 `docs/architecture_defense.md` 与 docs 体系收口
 - Day 43 replay attack 三阶段实验与联合防御统计
 - Day 44 batch abuse 压测与 full path / abuse payload 分离验证
+- Day 45 Redis 状态篡改与 Auditor/Redis 外部对账验证
+- Day 46 恶意服务端伪造执行记录与账本链断裂检测
+- Day 47 APIR / VPIR proof-bearing response 最小兼容透传
+- Day 48 baseline 1：无 access-control 前置保护直打 PIR 入口性能基线
+- Day 49 baseline 2：仅用户态 verifier 的 L7 防线性能基线
+- Day 50 full solution：`L7 verifier -> derived block dispatch -> L4 eBPF/TC drop` 完整方案实验
 
 当前 Day 12 生命周期在跨服务模式下已再次通过 4 条关键验收：
 
@@ -629,7 +641,88 @@
    - 批量 abuse 请求未穿透到 PIR
    - 当前“fake ticket abuse”主要由 `sigma` 篡改来代表，而非覆盖所有 fake ticket 形态
 
-因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、主链核心场景已完成本周联调区分验证、Redis 状态表已完成 Day 22 收口、Day 23 原子核销并发验收通过、Day 24 判定与消费语义一致性已落地、Day 25–27 审计留痕/追溯/争议闭环已形成、Day 28 verifier 内部结构已稳定收口、Day 29 Python 控制层已可实际驱动真实主候选 SimplePIR 计算、Day 31–35 已完成请求到真实 PIR 结果的协议对齐、主链 happy path、非法请求 PIR 隔离与第一轮功能性指标闭环、Day 36–42 已完成 eBPF 第一版边界固定、最小环境验证、TC 轻量前置过滤、derived block 联动、漏斗量化与架构留档、Day 43–44 已完成 replay 攻击抗性验证与批量 abuse / full path 承压验证”的阶段。
+当前 Day 45 已完成恶意 verifier 状态篡改测试：
+
+1. 当前目标是验证：
+   - 如果 verifier / Redis 被恶意写入虚假 `CONSUMED` 状态，系统能否被外部对账发现
+2. 当前结论是：
+   - 仅篡改 Redis 状态而不伴随 Auditor 账本记录时，会出现“ghost consumption”
+   - 该不一致可通过：
+     - `GET /api/v1/verifier/ticket_state/{sn}`
+     - `GET /api/v1/auditor/trace/{sn}`
+     的外部对账发现
+3. 因此当前最准确表述是：
+   - Day 45 证明了 Redis 状态与 Auditor 账本是两个独立证据源
+   - 当 verifier 侧状态被恶意篡改时，可被 cross-check 发现
+   - 这不是自动防篡改修复，而是“可检测的不一致”
+
+当前 Day 46 已完成恶意服务端伪造执行记录测试：
+
+1. 当前目标是验证：
+   - 如果服务端试图伪造执行记录或静默改写账本，外部是否能发现
+2. 当前结论是：
+   - 若伪造记录未同步反映在 Redis / ticket_state / HTTP 证据中，则会形成跨证据源不一致
+   - 若直接静默改写 `audit_ledger.jsonl`，则会破坏链式 HMAC 完整性
+3. 因此当前最准确表述是：
+   - Day 46 证明了“伪造执行记录”可通过跨证据源对账与离线账本完整性校验被发现
+   - 当前系统具备最小可检测篡改能力，但不等于具备自动追责或自动恢复能力
+
+当前 Day 47 已完成 APIR / VPIR 兼容性验证：
+
+1. 当前目标不是把系统切换为 APIR / VPIR
+2. 而是验证：
+   - 当前控制层 / verifier / models 是否能最小兼容携带 proof 的 PIR response
+3. 当前结论是：
+   - 当前结构允许在不破坏主线的前提下透传 proof-bearing payload
+   - 即：
+     - `result`
+     - `mapped_index`
+     - `recovered_val`
+     - `proof`
+     可作为扩展字段兼容承载
+4. 因此当前最准确表述是：
+   - Day 47 完成的是“兼容性验证”
+   - 不是“已正式实现可验证 PIR”
+
+当前 Day 48 已完成基线实验 1：
+
+1. 当前实验定义为：
+   - 无 access-control 前置保护
+   - 直接打 PIR 服务入口
+2. 当前结果可作为：
+   - “无保护”性能与资源承压基线
+3. 当前最准确表述是：
+   - Day 48 提供的是对照组 baseline 1
+   - 用于和后续“仅 verifier”及“完整方案”实验横向比较
+
+当前 Day 49 已完成基线实验 2：
+
+1. 当前实验定义为：
+   - 仅用户态 verifier 的 L7 防线
+   - 不启用 eBPF fast path
+2. 当前结果可作为：
+   - “只有 full path”时的性能 / 拦截 / 资源承压基线
+3. 当前最准确表述是：
+   - Day 49 提供的是对照组 baseline 2
+   - 用于与 Day 48 和 Day 50 横向比较
+
+当前 Day 50 已完成完整方案实验：
+
+1. 当前实验定义为完整方案：
+   - `L7 verifier -> derived block dispatch -> L4 eBPF/TC drop`
+2. 当前结果说明：
+   - replay flood 下，首次请求在 full path 被消费
+   - 随后部分流量由 verifier / Redis 状态机拦截
+   - 再后续一部分流量可被 derived block 驱动的 L4 eBPF/TC 提前压制
+3. 因此当前最准确表述是：
+   - Day 50 证明了完整方案下的协同防御闭环已经成立
+   - 项目已具备：
+     - baseline 1：无保护
+     - baseline 2：仅 verifier
+     - full solution：verifier + derived block + eBPF/TC
+     三组可对比实验基础
+
+因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、主链核心场景已完成本周联调区分验证、Redis 状态表已完成 Day 22 收口、Day 23 原子核销并发验收通过、Day 24 判定与消费语义一致性已落地、Day 25–27 审计留痕/追溯/争议闭环已形成、Day 28 verifier 内部结构已稳定收口、Day 29 Python 控制层已可实际驱动真实主候选 SimplePIR 计算、Day 31–35 已完成请求到真实 PIR 结果的协议对齐、主链 happy path、非法请求 PIR 隔离与第一轮功能性指标闭环、Day 36–42 已完成 eBPF 第一版边界固定、最小环境验证、TC 轻量前置过滤、derived block 联动、漏斗量化与架构留档、Day 43–50 已完成 replay 攻击、batch abuse、恶意状态篡改、伪造执行记录、兼容性验证以及 baseline / full-solution 实验闭环”的阶段。
 
 ---
 
@@ -1174,6 +1267,55 @@ Day 41 已形成漏斗统计口径：
 - 批量 abuse 请求未穿透到 PIR
 - 当前 “fake ticket abuse” 主要由 `sigma` 篡改来代表，而非覆盖所有 fake ticket 形态
 
+### 24. 恶意状态篡改 / 伪造执行记录可检测性契约（Day 45 / Day 46）
+当前 Day 45–46 已证明：
+
+- Redis 状态与 Auditor 账本是两个独立证据源
+- 若仅篡改 verifier / Redis 状态而不伴随账本记录，会形成可检测不一致
+- 若伪造执行记录未同步反映在其他证据源中，也会形成跨证据源不一致
+- 若直接静默改写 `audit_ledger.jsonl`，会破坏链式 HMAC 完整性
+
+当前最准确表述是：
+
+- 当前系统具备“最小可检测篡改能力”
+- 但不等于具备自动修复、自动追责或强对抗下的不可抵赖性保证
+
+### 25. APIR / VPIR proof-bearing response 兼容性契约（Day 47）
+当前 Day 47 完成的是兼容性验证，不是正式实现可验证 PIR。
+
+当前已证明：
+
+- 当前控制层 / verifier / models 可在不破坏主线的前提下最小兼容透传 proof-bearing payload
+
+当前最小兼容承载字段包括：
+
+- `result`
+- `mapped_index`
+- `recovered_val`
+- `proof`
+
+### 26. 基线实验与完整方案实验契约（Day 48 / Day 49 / Day 50）
+当前三组实验分工已明确：
+
+#### Baseline 1（Day 48）
+- 无 access-control 前置保护
+- 直接打 PIR 服务入口
+
+#### Baseline 2（Day 49）
+- 仅用户态 verifier 的 L7 防线
+- 不启用 eBPF fast path
+
+#### Full Solution（Day 50）
+- `L7 verifier -> derived block dispatch -> L4 eBPF/TC drop`
+
+当前最准确表述是：
+
+- 项目已经具备：
+  - 无保护 baseline
+  - 仅 verifier baseline
+  - 完整方案 full solution
+  三组可横向比较的实验基础
+
 ---
 
 ## 四、当前 Verifier 的真实语义边界
@@ -1190,7 +1332,7 @@ Day 41 已形成漏斗统计口径：
 - 校验 binding consistency
 - 查询并推进 Redis 状态机
 - 在进入后端执行前将票据原子推进为 `PENDING`
-- 通过 HTTP 将合法请求转发至 `PIRServer`
+- 通过 HTTP 将合法请求转发至 `PIR Server`
 - 根据 PIR Server 返回结果将票据推进为：
   - `CONSUMED`
   - `FAILED`
@@ -1204,7 +1346,7 @@ Day 41 已形成漏斗统计口径：
   - 要求 `sn` 为 64-char hex
   - Redis miss 返回 `UNUSED`
 - `/api/v1/verifier/metrics`：
-  - 用于单进程调试与 Day 33 / Day 34 / Day 41 / Day 44 验收
+  - 用于单进程调试与 Day 33 / Day 34 / Day 41 / Day 44 / Day 50 验收
   - 服务重启后计数清零
 
 当前拒绝语义已明确：
@@ -1251,6 +1393,7 @@ Day 41 已形成漏斗统计口径：
 - DB / hint 生命周期与性能优化
 - XDP / TC 取舍在真实数据面条件下的进一步定型
 - Day 44 之外其他 fake ticket 形态覆盖仍待扩展
+- Day 45 / 46 目前仍是“可检测篡改”，不是“自动恢复篡改”
 
 ---
 
@@ -1432,128 +1575,75 @@ Day 41 已形成漏斗统计口径：
    - 合法 full path 100 条全部进入 PIR
    - 密码学材料滥用 100 条全部在 verifier 前被阻断
    - 无票据 / 缺 witness 滥用 100 条全部在 verifier 前被阻断
+39. Day 45 恶意 verifier 状态篡改测试已通过：
+   - ghost consumption 可被 Redis / Auditor 外部对账发现
+40. Day 46 恶意服务端伪造执行记录测试已通过：
+   - 跨证据源不一致与离线账本链断裂均可被发现
+41. Day 47 APIR / VPIR 兼容性验证已通过：
+   - proof-bearing response 可最小兼容透传
+42. Day 48 baseline 1 已完成：
+   - 无 access-control 前置保护直打 PIR 入口性能基线已获得
+43. Day 49 baseline 2 已完成：
+   - 仅用户态 verifier 的 L7 防线性能基线已获得
+44. Day 50 full solution 实验已完成：
+   - `L7 verifier -> derived block dispatch -> L4 eBPF/TC drop` 协同防御闭环已验证成立
 
 ### 已有脚本 / 测试
 - `scripts/test_ticket_flow.sh`
-  - 验证 Day 9 ticket 获取链路
 - `scripts/test_day10_verifier.py`
-  - 验证 Day 10 verifier 正反例链路
 - `scripts/test_day11_binding.py`
-  - 旧版 binding 联调脚本（当前应以最新主链语义重新审视）
 - `scripts/test_day12_lifecycle.py`
-  - 验证生命周期状态机
 - `scripts/test_day13_blind_link.py`
-  - 验证 blind-sign 全链路正反例
 - `scripts/test_day17_chain.py`
-  - 验证 blind ticket + admission 最小链路
 - `scripts/test_day17_full_e2e.py`
-  - 验证 `Client -> Admission -> Issuer -> Binding -> Verifier -> PIR Server` 主线烟雾测试
 - `tests/test_crypto_core.py`
-  - blind-sign / verify 核心单测
 - `scripts/test_day22_redis_state.py`
-  - 验证 Day 22 Redis 状态表核心语义与 Epoch TTL
 - `scripts/test_day23_concurrency.py`
-  - 验证 Day 23 原子核销并发语义
 - `scripts/test_day24_consume_semantics.py`
-  - 验证 Day 24 判定路径与票据终态绑定一致性
 - `scripts/test_day25_audit_chain.py`
-  - 验证 Day 25 审计账本链式 HMAC 防篡改
 - `scripts/test_day26_auditor_trace.py`
-  - 验证 Day 26 Auditor trace 与一致性查询
 - `scripts/test_day27_dispute_resolution.py`
-  - 验证 Day 27 最小争议验证闭环
 - `scripts/test_day31_dynamic_mapping.py`
-  - 验证 Day 31 `q -> pir_index` 动态映射与 `recovered_val`
 - `scripts/test_day32_full_pipeline.py`
-  - 验证 Day 32 主链 happy path 返回真实 PIR 结果
 - `scripts/test_day33_abuse_prevention.py`
-  - 验证 Day 33 非法请求不进入 PIR
 - `scripts/test_day34_functional_metrics.py`
-  - 验证 Day 34 第一轮功能性指标与 metrics 对账
 - `scripts/hello_ebpf.py`
-  - 验证 Day 37 最小 eBPF hello 链路
-- Day 38 / 39 / 40 / 41 当前联调脚本与命令流
-  - 以服务器端 TC 挂载、外部主机流量发射与 `/metrics` / trace 对账为主
-  - 当前尚未统一收口为单一固定脚本文件名
 - `scripts/test_day43_replay_attacks.py`
-  - 验证 Day 43 replay 攻击三阶段实验
 - `scripts/test_day44_batch_abuse.py`
-  - 验证 Day 44 客户端批量 abuse 与 full path 承压测试
+- Day 45 / 46 / 47 / 48 / 49 / 50 当前实验脚本与命令流
+  - 当前已形成实验闭环，但文件名与执行编排仍可继续收口
 
 ---
 
 ## 七、当前最值得继续推进的方向
 
-### 下一阶段：端到端回归脚本 / 周回归套件
+### 下一阶段：周回归脚本 / 实验编排统一收口
 目标：
 
-- 在 Day 21 本周联调、Day 22 状态表收口、Day 23 原子核销并发验收、Day 24 判定-消费语义验收、Day 25–27 审计闭环验收、Day 28 verifier 收口回归、Day 29 真实主候选 PIR 接入验收、Day 31–35 协议/主链/指标收口、Day 36–42 eBPF 两级前置验证收口、Day 43–44 恶意客户端攻击实验收口的基础上，将核心场景沉淀为可重复执行的周联调脚本 / 回归脚本
-- 避免后续在真实 PIR 后端进一步收口、兼容性验证或更强审计增强阶段把当前主链路打坏
+- 在 Day 44–50 已完成攻击实验、基线实验、完整方案实验的基础上
+- 将当前分散脚本收口成可重复执行的周回归 / 实验编排资产
 
-建议覆盖场景：
+建议优先收口：
 
-1. 正常请求
-2. 无票据请求
-3. 过期票据
-4. 篡改 binding 请求
-5. PIR 后端失败请求
-6. `PENDING / CONSUMED / FAILED` replay 请求
-7. Auditor trace / 最小一致性查询
-8. 审计账本完整性校验
-9. 真实主候选 PIR 确定性基线
-10. 动态映射与结构化 PIR 结果返回
-11. 非法请求 PIR 前隔离
-12. 功能性指标与 metrics 对账
-13. eBPF fast path + verifier full path 漏斗效果
-14. 单票据串行 replay
-15. 并发 replay storm
-16. batch abuse / full path stress
+1. baseline 1 / baseline 2 / full solution 三组实验统一编排
+2. replay attack / batch abuse / fake sig / missing ticket / missing witness 统一编排
+3. Auditor trace / ledger verify / state cross-check 统一编排
+4. eBPF fast path + verifier full path + derived block 漏斗对账统一编排
 
-需要完成：
-
-1. 整理覆盖正常请求与异常请求的最小联调矩阵
-2. 验证无票据请求是否被正确业务拒绝
-3. 验证过期票据是否在 verifier 前置快拒绝
-4. 验证篡改 `q / b / w` 请求是否命中 binding consistency reject
-5. 验证 PIR 后端失败是否稳定命中 `FAILED`
-6. 验证正常请求仍可成功进入 PIR Server 并返回 `SUCCESS`
-7. 验证 Auditor 侧最小追溯与一致性查询保持可用
-8. 验证真实主候选 PIR 路径保持确定性通过
-9. 验证动态映射结果与 `recovered_val` 保持一致
-10. 验证非法请求不会进入 PIR
-11. 验证 eBPF Gateway Drops / Reached Verifier / PIR Invoked 的漏斗统计稳定
-12. 验证单票据重复请求下只允许一次成功
-13. 验证并发 replay 风暴下仍只允许一次成功
-14. 验证批量 abuse 请求不会穿透到 PIR
-15. 将以上场景沉淀为一份周联调脚本 / 回归脚本
-
-### 再下一阶段：更强审计与部署增强（后续）
+### 再下一阶段：PIR 协议与真实后端最终收口
 目标：
 
-- 在不破坏当前已稳定的最小审计闭环前提下，逐步增强威胁模型覆盖与部署稳健性
-
-候选方向：
-
-1. 审计密钥托管与轮换
-2. 多进程 / 多实例下的顺序化落账
-3. 外部锚定或周期性摘要封存
-4. 多事件追踪模式（单 SN 多记录）
-5. 更强的审计恢复与自检能力
-
-### 再下一阶段：PIR 协议与真实后端收口（第三阶段）
-目标：
-
-- 将当前 Python stub adapter / subprocess bridge 逐步推进到正式独立 PIR 后端协议边界
+- 继续推进当前真实主候选 PIR，从“已可驱动”推进到“协议稳定、生命周期清晰、结果处理统一”
 
 需要完成：
 
 1. 抽取 PIR 请求/响应公共模型
 2. 明确 Python 控制层与 PIR 适配层的最终输入输出协议
-3. 完成 `q -> PIR query` 的正式映射
+3. 完成 `q -> PIR query` 的正式映射继续收口
 4. 统一输出解析与错误返回路径
 5. 收口 DB / hint 生命周期与性能优化
 
-### 再下一阶段：eBPF 第一版工程化收口（后续）
+### 再下一阶段：eBPF 第一版工程化收口
 目标：
 
 - 在不突破 Day 36 已固定边界的前提下，把当前已验证成立的 eBPF fast path 做成更稳定的工程资产
@@ -1596,6 +1686,9 @@ Day 41 已形成漏斗统计口径：
 - Day 36–42 当前保持 Fast Path / Full Path 两级分工：Redis / verifier 仍是唯一业务状态真相源，eBPF 仅承担明显非法流量前置过滤与 verifier 派生的来源级短时抑制
 - Day 43 当前测到的是“联合防御矩阵下的 replay 抗性”，不错误归因给单一组件
 - Day 44 当前 “fake ticket abuse” 主要由 `sigma` 篡改来代表，不宣称已覆盖所有 fake ticket 形态
+- Day 45 / 46 当前系统提供的是“可检测的不一致 / 篡改”，不是“自动恢复”或“强不可抵赖”
+- Day 47 当前完成的是 APIR / VPIR proof-bearing response 的兼容性验证，不是正式实现可验证 PIR
+- Day 48 / 49 / 50 当前已形成三组可横向比较实验：无保护、仅 verifier、完整方案
 
 ---
 
@@ -1637,6 +1730,12 @@ Day 41 已形成漏斗统计口径：
 - **Day 42 两级前置验证架构文档化已完成**
 - **Day 43 replay 攻击实验已完成**
 - **Day 44 batch abuse / full path 承压测试已完成**
+- **Day 45 恶意 verifier 状态篡改测试已完成**
+- **Day 46 恶意服务端伪造执行记录测试已完成**
+- **Day 47 Authenticated / Verifiable PIR 兼容性验证已完成**
+- **Day 48 基线实验 1 已完成**
+- **Day 49 基线实验 2 已完成**
+- **Day 50 完整方案实验已完成**
 
 并已确认：
 
@@ -1670,3 +1769,7 @@ Day 41 已形成漏斗统计口径：
 - Day 42 分层防御文档化完成
 - Day 43 replay 抗性实验通过
 - Day 44 batch abuse / full path 承压测试通过
+- Day 45 ghost consumption 可检测
+- Day 46 伪造执行记录可检测
+- Day 47 proof-bearing response 最小兼容透传通过
+- Day 48 / 49 / 50 三组基线 / 完整方案实验基础已形成
