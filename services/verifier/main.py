@@ -69,10 +69,10 @@ def dispatch_l4_block_signal(client_ip: str, duration_sec: int = 10):
     """派生 L4 封禁信号，不改变 Redis 业务决策"""
     try:
         # 收口校验：仅处理 IPv4，遇到 IPv6 / unknown / invalid 直接跳过
-        socket.inet_aton(client_ip) 
+        socket.inet_aton(client_ip)
         if client_ip in ["127.0.0.1", "localhost"]:
             return
-            
+
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         msg = f"BLOCK {client_ip} {duration_sec}".encode('utf-8')
         sock.sendto(msg, ("127.0.0.1", 9002))
@@ -131,9 +131,10 @@ async def query_ticket_state(sn: str):
     return {"sn": sn, "ticket_state": state.value}
 
 
-async def call_pir_server(query_payload: str) -> tuple[bool, str, Optional[int], Optional[int]]:
+async def call_pir_server(query_payload: str) -> tuple[bool, str, Optional[int], Optional[int], Optional[str]]:
     """
     Day 32 升级：从 PIR Server 获取结构化结果并透传
+    Day 47 升级：增加 apir_proof 透传支持
     """
     try:
         async with httpx.AsyncClient() as client:
@@ -147,15 +148,16 @@ async def call_pir_server(query_payload: str) -> tuple[bool, str, Optional[int],
                 data = body.get("data")
                 mapped_index = body.get("mapped_index")
                 recovered_val = body.get("recovered_val")
+                apir_proof = body.get("apir_proof")  # Day 47: 取出可选的 proof
 
                 logger.info(f"PIR Server returned SUCCESS. Index: {mapped_index}")
-                return True, data, mapped_index, recovered_val
+                return True, data, mapped_index, recovered_val, apir_proof
             else:
                 logger.error(f"PIR Server Error: {resp.status_code} - {resp.text}")
-                return False, resp.text, None, None
+                return False, resp.text, None, None, None
     except Exception as e:
         logger.error(f"PIR Bridge Exception: {e}")
-        return False, str(e), None, None
+        return False, str(e), None, None, None
 
 
 # ---------------------------------------------------------
@@ -235,13 +237,13 @@ async def execute_query(req: RequestInstance, request: Request, background_tasks
     if pre_err:
         logger.warning(f"Request {req.request_id} REJECTED: {pre_err.reason}")
         verifier_metrics["blocked_before_pir"] += 1
-        
+
         # 【Day 40 核心】：明确命中 CONSUMED 状态的重放攻击，派生一个 L4 Fast-Path 封禁指令
         if pre_err.ticket_state == TicketState.CONSUMED:
             client_ip = request.client.host if request.client else "unknown"
             logger.warning(f"Replay detected. Deriving short-term L4 block for source: {client_ip}")
             dispatch_l4_block_signal(client_ip, duration_sec=10)
-            
+
         return pre_err
 
     # Step 2: 准备承诺并运行密码学校验
@@ -267,7 +269,8 @@ async def execute_query(req: RequestInstance, request: Request, background_tasks
         f"🚀 [PIR_START] Req:{req.request_id[:8]} | Invoking heavy SimplePIR backend for SN: {req.ticket.sn[:8]}...")
 
     # Step 4: 执行后端 PIR 服务
-    success, payload_or_error, mapped_index, recovered_val = await call_pir_server(req.query_payload)
+    # [Day 47 修改] 接收 apir_proof 透传载荷
+    success, payload_or_error, mapped_index, recovered_val, apir_proof = await call_pir_server(req.query_payload)
 
     logger.info(f"🏁 [PIR_END] Req:{req.request_id[:8]} | SimplePIR backend execution finished. Success: {success}")
     # ==============================================================================
@@ -285,10 +288,15 @@ async def execute_query(req: RequestInstance, request: Request, background_tasks
             decision = Decision.SUCCESS
             reason = "PIR execution completed"
 
+            # [Day 47] 明确日志记录：Verifier 仅作为不透明透传方，不参与证明语义校验
+            if apir_proof:
+                logger.info("PIR response carries optional proof blob; verifier forwards it without semantic validation.")
+
             final_data = PIRResultPayload(
                 result_string=payload_or_error,
                 mapped_index=mapped_index,
-                recovered_val=recovered_val
+                recovered_val=recovered_val,
+                apir_proof=apir_proof  # 透传 Optional Proof
             )
     else:
         get_state_manager().mark_failed(req.ticket.sn, epoch_id=req.ticket.epoch_id)

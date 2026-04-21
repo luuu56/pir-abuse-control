@@ -70,12 +70,20 @@ async def execute_pir_query(req: PIRQueryRequest):
             # 打印 engine_meta，不浪费宝贵的分析数据
             logger.info(f"External PIR engine executed successfully. Meta: {meta}")
 
-            # 联动 3：同时返回给上层
-            return {
+            # 基础响应结构（没有 proof）
+            response_dict = {
                 "data": result,
                 "mapped_index": pir_index,
                 "recovered_val": recovered_val
             }
+
+            # [Day 47 补全] 仅当客户端需要 VPIR/APIR 风格证明时，才附加 Optional 字段
+            # 绑定要素：索引 | 恢复值 | 原始结果串
+            if "apir_compat" in req.query_payload:
+                proof_material = f"{pir_index}|{recovered_val}|{result}"
+                response_dict["apir_proof"] = f"pir_proof_{hashlib.sha256(proof_material.encode()).hexdigest()[:24]}"
+
+            return response_dict
 
         except EngineTimeoutError as e:
             logger.error(f"[Timeout] {e}")

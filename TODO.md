@@ -1123,6 +1123,34 @@
   - [x] 最小篡改留痕
 - [x] 不扩展为完整 verifiable execution 机制
 - 
+### Day 47：Authenticated / Verifiable PIR 兼容性验证
+- [x] 在 `common.models.PIRResultPayload` 中新增可选字段：
+  - [x] `apir_proof: Optional[str]`
+- [x] 保持该字段为可选兼容字段，不改变主链核心结果结构：
+  - [x] `result_string`
+  - [x] `mapped_index`
+  - [x] `recovered_val`
+- [x] 在 `services/pir_server/main.py` 中新增 mock proof 载荷返回
+- [x] mock proof 与响应上下文绑定：
+  - [x] `mapped_index`
+  - [x] `recovered_val`
+  - [x] `result_string`
+- [x] 在 `services/verifier/main.py` 中透传 proof 字段
+- [x] 明确 verifier 不参与 proof 语义校验，仅作为不透明透传方
+- [x] 新增 `scripts/test_day47_apir_compat.py`
+- [x] 完成“带 Proof 的最小兼容性验证”
+- [x] 完成“Proof 缺失时的向下兼容性 smoke test”
+
+### Day 47 验收结果
+- [x] access-control 主链可透明透传 APIR/VPIR 风格 proof 字段
+- [x] proof 字段与响应上下文可按 mock 契约重算一致
+- [x] 当 proof 缺失时，主链仍可正常返回核心结果
+- [x] Day 47 验收通过：access-control 层与 APIR/VPIR 风格执行路径可共存，不构成最小接口层冲突
+
+### Day 47 结论
+- [x] 当前已完成 proof-bearing PIR response 的最小兼容性验证
+- [x] 当前 verifier 未被扩展为 proof 语义验证器
+- [x] 当前结果不等同于实现真实 APIR / VPIR 证明验证
 
 ## 当前项目状态总结 
 - Issuer blind-sign 已跑通

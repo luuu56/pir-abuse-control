@@ -2902,3 +2902,95 @@ Day 43 当前的两个 replay 场景说明了两类不同的主导防线：
 ### 下一步
 - 进入 Day 47：Authenticated / Verifiable PIR 兼容性验证
 - 目标是验证 access-control 层与 APIR / VPIR 风格执行路径可共存，而不是重写整套 PIR 正确性证明框架
+- 
+## 2026-04-21
+
+## Day 47：Authenticated / Verifiable PIR 兼容性验证完成
+
+### 完成内容
+1. **PIR 结果模型最小扩展**
+   - 在 `common.models.PIRResultPayload` 中新增：
+     - `apir_proof: Optional[str]`
+   - 当前该字段定位为：
+     - Generic APIR / VPIR style cryptographic proof blob
+   - 保持其为可选兼容字段，不改变主链核心结果字段：
+     - `result_string`
+     - `mapped_index`
+     - `recovered_val`
+
+2. **pir_server 最小兼容性集成**
+   - 在 `services/pir_server/main.py` 中新增 mock proof 返回
+   - proof 当前绑定材料为：
+     - `mapped_index`
+     - `recovered_val`
+     - `result_string`
+   - 当前生成方式仅用于 Day 47 兼容性验证：
+     - 不是完整 APIR / VPIR 证明实现
+
+3. **verifier 透明透传收口**
+   - 在 `services/verifier/main.py` 成功路径中提取：
+     - `apir_proof`
+   - verifier 当前行为为：
+     - 仅透明透传 proof blob
+     - 不参与 proof 语义验证
+   - 并增加日志说明：
+     - verifier forwards it without semantic validation
+
+4. **带 Proof 的最小兼容性验证**
+   - 新增：
+     - `scripts/test_day47_apir_compat.py`
+   - 客户端完整走通：
+     - ticket acquisition
+     - binding
+     - verifier access-control
+     - pir_server execution
+     - proof-bearing response return
+   - 成功验证：
+     - proof 字段可透明透传
+     - 客户端可按 mock 契约重算 proof 与响应上下文一致
+
+5. **Proof 缺失时的向下兼容性 smoke test**
+   - 补充完成：
+     - proof 缺失场景兼容性验证
+   - 实际结果表明：
+     - `apir_proof = None`
+     - 主链仍可正常返回核心结果
+     - verifier 未将 proof 变为成功路径强依赖
+     - Optional Proof 平滑缺失
+
+### 验收结果
+Day 47 共完成两类验收：
+
+1. **带 Proof 的兼容性验证**
+   - access-control 主链不会阻断或破坏 APIR / VPIR 风格 proof 字段透传
+   - proof 可与响应上下文保持 mock 契约一致
+
+2. **Proof 缺失时的向下兼容性验证**
+   - 核心结果字段仍可正常解析
+   - 主链未被 Proof 字段绑死
+   - verifier 对 Proof 缺失保持向下兼容
+
+### 关键结论
+- Day 47 目标已完成：
+  - 完成最小兼容性集成
+  - 完成最小兼容性验证
+  - 证明 access-control 层可与 APIR / VPIR 风格执行路径共存，不构成最小接口层冲突
+
+- 当前 Day 47 的准确定位是：
+  - proof-bearing PIR response 的最小兼容性验证
+  - 不是完整 authenticated PIR / verifiable PIR 证明实现
+
+### 当前边界 / 备注
+- verifier 当前仍不是 proof verifier
+- pir_server 当前返回的是 mock proof blob
+- 当前系统尚未实现：
+  - 真实 APIR 认证证明验证
+  - 真实 VPIR 执行正确性证明验证
+  - 数据库真实性 / 输出完整性的完整密码学证明链
+
+### 下一步
+- 进入 Day 48：基线实验 1
+- 目标：
+  - 无任何前置保护
+  - 直接打 PIR backend
+  - 记录 latency / throughput / CPU / memory

@@ -45,7 +45,8 @@ class PIRResultPayload(BaseModel):
     result_string: str
     mapped_index: int
     recovered_val: int
-
+# [Day 47] 修正描述：不再特指 Authenticated PIR，而是兼容 APIR/VPIR 风格的证明载荷
+    apir_proof: Optional[str] = Field(None, description="Generic APIR/VPIR style cryptographic proof blob")
 
 class PIRResponse(BaseModel):
     request_id: str
