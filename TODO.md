@@ -1031,6 +1031,26 @@
 - [x] Day 42 验收通过：
   - [x] 两级前置验证图已留档
   - [x] fast path / full path 文档已留档
+### Day 43：恶意客户端 replay 攻击
+- [x] 新增 `scripts/test_day43_replay_attacks.py`
+- [x] 覆盖两类 replay 攻击场景：
+  - [x] 单票据串行重复请求
+  - [x] 高并发 replay storm（20 线程）
+- [x] 在并发阶段引入 `threading.Barrier`，保证多线程统一起跑
+- [x] 为并发 replay 请求生成独立 `request_id`，便于日志区分与排障
+- [x] 在脚本中增加配置检查，避免 `acquire_ticket()` 误打本地 loopback
+- [x] Phase 1：串行 replay 验证通过
+  - [x] 第一次请求 `SUCCESS`
+  - [x] 第二次 replay 命中 `CONSUMED`
+  - [x] 第三次 replay 被 eBPF derived L4 dampening 压制（TIMEOUT）
+- [x] Phase 2：20 线程并发 replay storm 验证通过
+  - [x] `SUCCESS = 1`
+  - [x] `REJECTED_PENDING = 19`
+  - [x] `REJECTED_CONSUMED = 0`
+  - [x] `TIMEOUT = 0`
+- [x] Day 43 验收通过：
+  - [x] 只允许一次成功
+  - [x] 未出现 double spend
 
 ## 当前项目状态总结
 - Issuer blind-sign 已跑通

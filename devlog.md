@@ -2533,3 +2533,87 @@ Day 35 已完成
 ### 当前状态
 - 当前两级前置验证体系已经不仅“能运行”，而且已经具备可引用、可扩展、可用于论文/实验说明的正式文档化表达
 - Day 42 可视为本周 eBPF 两级架构阶段性收口完成
+- 
+## 2026-04-21
+
+## Day 43：恶意客户端 replay 攻击完成
+
+### 背景
+进入第 7 周后，当前实验重点从“防线搭建”转向“攻击验证”。Day 43 聚焦恶意客户端 replay 攻击，目标是验证在：
+1. 单票据重复请求
+2. 并发 replay 风暴
+两种场景下，系统是否始终只允许一次成功，杜绝双花。
+
+### 完成内容
+1. **新增 Day 43 攻击脚本**
+   - 新增：
+     - `scripts/test_day43_replay_attacks.py`
+   - 脚本分为三阶段：
+     1. 串行 replay
+     2. 20 线程并发 replay storm
+     3. 联合防御战果统计
+
+2. **并发攻击脚本工程收口**
+   - 在并发阶段加入 `threading.Barrier`
+   - 保证 20 个线程尽可能同一时刻统一起跑
+   - 对并发请求 payload 做 `deepcopy`
+   - 为每个 storm 请求追加唯一 `request_id` 后缀，提升 verifier 日志可读性与排障能力
+   - 增加 config 地址检查，避免 `acquire_ticket()` 误打到本地 loopback
+
+3. **串行 replay 验证**
+   - 第 1 次合法请求：
+     - `HTTP 200 | SUCCESS | State: CONSUMED | Reason: PIR execution completed`
+   - 第 2 次 replay：
+     - `HTTP 200 | REJECTED | State: CONSUMED | Reason: Ticket already CONSUMED`
+   - 第 3 次 replay：
+     - `TIMEOUT (Likely dropped by eBPF L4 Dampening)`
+   - 说明：
+     - verifier / Redis 能正确记住票据已消费
+     - Day 40 的 derived L4 dampening 已接上并生效
+
+4. **并发 replay storm 验证**
+   - 20 线程统一起跑，对同一 ticket / same SN 发起高并发 replay
+   - 最终结果：
+     - `SUCCESS = 1`
+     - `REJECTED_PENDING = 19`
+     - `REJECTED_CONSUMED = 0`
+     - `TIMEOUT = 0`
+   - 说明：
+     - 真正抢到处理权的只有 1 个请求
+     - 其余 19 个请求全部被 `PENDING` 状态前沿拦住
+     - 未出现第二次成功
+     - 未暴露 double spend / race condition
+
+### 结果解释
+Day 43 当前的两个 replay 场景说明了两类不同的主导防线：
+
+1. **串行 replay**
+   - 第一个 replay 命中 `CONSUMED`
+   - 后续请求再被 eBPF derived L4 dampening 压制
+   - 因此串行 replay 主要体现：
+     - `CONSUMED` 状态机记忆
+     - 派生 L4 抑制联动
+
+2. **并发 replay storm**
+   - 主导防线不是后置 `CONSUMED`
+   - 而是 Redis 原子锁 / `PENDING` 状态
+   - 这说明在真正同起跑的并发夹击下，系统最前沿的原子锁已经足以保证：
+     - 只允许 1 个请求成功
+     - 其余请求在进入完整处理前即被挡住
+
+### 关键结论
+- Day 43 已完成恶意客户端 replay 攻击实验
+- 当前系统在两种攻击面下均满足验收标准：
+  - 单票据重复请求：只允许一次成功
+  - 并发 replay 风暴：只允许一次成功
+- 未观察到双花成功，也未观察到 race condition 导致的多次成功
+- 当前最准确的结论是：
+  - 系统已具备“联合防御矩阵下的 replay 抗性”
+  - 该矩阵由以下三层共同组成：
+    1. Redis 原子锁
+    2. verifier 状态机
+    3. eBPF derived L4 dampening
+
+### 当前状态
+- Day 43 验收通过
+- 当前 replay 防御已经不仅停留在“理论设计”，而是通过串行与并发两类恶意客户端攻击验证了实际有效性
