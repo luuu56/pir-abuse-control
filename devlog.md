@@ -2994,3 +2994,102 @@ Day 47 共完成两类验收：
   - 无任何前置保护
   - 直接打 PIR backend
   - 记录 latency / throughput / CPU / memory
+  - 
+  ## 2026-04-21
+
+## Day 48：基线实验 1 完成
+
+### 完成内容
+1. **Day 48 基线压测脚本落地**
+   - 新增：
+     - `scripts/test_day48_baseline_1.py`
+
+2. **实验路径固定**
+   - 当前 Day 48 严格绕过 verifier
+   - 直接压测：
+     - `http://<server_ip>:8003/api/v1/pir/query`
+   - 当前实验定位为：
+     - 无 access-control 前置保护的 PIR 服务基线
+   - 注意：
+     - 该实验压测的是当前 `pir_server` 服务入口及其后端集成路径
+     - 不是纯 Go 引擎裸进程基线
+
+3. **压测脚本统计口径收口**
+   - 当前脚本固定使用：
+     - `aiohttp`
+     - `asyncio.Semaphore`
+     - `TCPConnector(limit=concurrency)`
+   - 当前载荷模式为：
+     - 固定 `query_payload`
+   - 当前指标统计包括：
+     - 总耗时
+     - 发射吞吐量
+     - 成功吞吐量
+     - 成功请求延迟：
+       - `Avg`
+       - `P95`
+       - `P99`
+       - `Max`
+       - `Min`
+     - Host 级资源监控：
+       - CPU `Avg / Max`
+       - Memory `Avg / Max`
+     - 状态 / 异常分布：
+       - `200`
+       - `timeout`
+       - `client_error`
+       - `unknown_error`
+
+4. **第一轮基线实验参数**
+   - 执行：
+     - `python scripts/test_day48_baseline_1.py 127.0.0.1 --requests 1000 --concurrency 100`
+
+### 运行结果
+本轮结果如下：
+
+- 总耗时：
+  - `13.05 s`
+- 发射吞吐量：
+  - `76.65 req/s`
+- 成功吞吐量：
+  - `76.65 req/s`
+- 成功请求延迟：
+  - `Avg = 1296.28 ms`
+  - `P95 = 1470.34 ms`
+  - `P99 = 1522.16 ms`
+  - `Max = 1717.16 ms`
+  - `Min = 981.88 ms`
+- Host CPU：
+  - `Avg = 89.7%`
+  - `Max = 100.0%`
+- Host Memory：
+  - `Avg = 40.7%`
+  - `Max = 43.9%`
+- 状态分布：
+  - `HTTP 200 = 1000`
+  - 无 `timeout / client_error / unknown_error`
+
+### 关键结论
+- Day 48 目标已完成：
+  - 无任何前置保护
+  - 直接打 PIR 服务入口
+  - 成功记录 latency / throughput / CPU / memory
+
+- 当前第一轮基线结果表明：
+  - 当前集成路径下的 PIR 服务基线吞吐约为：
+    - `76.65 req/s`
+  - 在 `concurrency=100` 下：
+    - 系统已明显逼近 CPU 主导瓶颈区间
+  - 当前延迟分布相对集中：
+    - 未出现明显长尾失控
+  - 当前内存占用较平稳：
+    - 瓶颈更偏向 CPU / 请求处理能力，而不是内存失控
+
+### 当前边界 / 备注
+- 当前 CPU / Memory 指标为 Host 级别，不是 `pir_server` 单进程级别
+- 当前实验使用固定单载荷，不代表多查询分布下的全部结论
+- 当前 Day 48 结果适合作为后续 Day 49 / Day 50 对照基线
+
+### 下一步
+- 进入 Day 49：基线实验 2
+- 目标是对比加入用户态 access-control 后的性能与资源变化

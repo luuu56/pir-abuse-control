@@ -1151,6 +1151,45 @@
 - [x] 当前已完成 proof-bearing PIR response 的最小兼容性验证
 - [x] 当前 verifier 未被扩展为 proof 语义验证器
 - [x] 当前结果不等同于实现真实 APIR / VPIR 证明验证
+### Day 48：基线实验 1
+- [x] 新增 `scripts/test_day48_baseline_1.py`
+- [x] 绕过 verifier，直接压测：
+  - [x] `http://<server_ip>:8003/api/v1/pir/query`
+- [x] 当前基线实验保持：
+  - [x] 无 access-control 前置保护
+  - [x] 固定 `query_payload`
+  - [x] 固定并发异步发射
+- [x] 指标统计已覆盖：
+  - [x] 总耗时
+  - [x] 发射吞吐量
+  - [x] 成功吞吐量
+  - [x] 成功请求延迟 `Avg / P95 / P99 / Max / Min`
+  - [x] Host CPU `Avg / Max`
+  - [x] Host Memory `Avg / Max`
+  - [x] 状态码分布
+- [x] 异常分类已收口为：
+  - [x] `timeout`
+  - [x] `client_error`
+  - [x] `unknown_error`
+
+### Day 48 验收结果
+- [x] 成功完成“无任何前置保护，直接打 PIR 服务入口”的第一轮基线实验
+- [x] 在 `requests=1000, concurrency=100` 下：
+  - [x] 总耗时：`13.05 s`
+  - [x] 发射吞吐量：`76.65 req/s`
+  - [x] 成功吞吐量：`76.65 req/s`
+  - [x] 成功延迟均值：`1296.28 ms`
+  - [x] 成功延迟 P95：`1470.34 ms`
+  - [x] 成功延迟 P99：`1522.16 ms`
+  - [x] Host CPU Avg / Max：`89.7% / 100.0%`
+  - [x] Host Memory Avg / Max：`40.7% / 43.9%`
+  - [x] HTTP 200：`1000/1000`
+- [x] Day 48 验收通过：已获得第一版 PIR 服务裸入口基线数据
+
+### Day 48 结论
+- [x] 当前机器与当前集成路径下，无前置保护时的 PIR 服务基线吞吐约为 `76.65 req/s`
+- [x] 当前 `concurrency=100` 时已明显逼近 CPU 主导瓶颈区间
+- [x] 当前内存占用相对平稳，瓶颈更偏向 CPU / 请求处理能力
 
 ## 当前项目状态总结 
 - Issuer blind-sign 已跑通
