@@ -2816,3 +2816,89 @@ Day 43 当前的两个 replay 场景说明了两类不同的主导防线：
   - 状态 / 日志缺失不一致发现能力
   - 审计内容 / 客户端预期不一致发现能力
 - 第 7 周实验已从“客户端攻击验证”扩展到“恶意 verifier / 审计对账验证”
+- 
+## 2026-04-21
+
+## Day 46：恶意服务端伪造执行记录测试完成
+
+### 完成内容
+1. **Day 46 恶意审计验收脚本落地**
+   - 新增：
+     - `scripts/test_day46_malicious_audit.py`
+
+2. **场景 C：跨证据源最小一致性问题发现**
+   - 模拟 Redis 中的执行真相为：
+     - `CONSUMED`
+   - 同时向 Auditor 上报伪造记录：
+     - `decision = FAILED`
+     - `query_commitment = fake_cq`
+   - 在 `GET /api/v1/auditor/trace/{sn}` 中传入：
+     - `expected_cq = real_cq`
+   - 成功识别两类矛盾：
+     - 状态矛盾：
+       - Redis 真相为 `CONSUMED`
+       - 账本记录为 `FAILED`
+     - 载荷矛盾：
+       - 账本中的 `query_commitment` 与 `expected_cq` 不一致
+
+3. **场景 D：离线账本篡改发现**
+   - 先生成一条合法审计记录
+   - 复制账本副本
+   - 在副本中按 `SN` 精确定位目标记录
+   - 篡改该记录的：
+     - `query_commitment`
+   - 使用本地完整性校验器重放 Day 25 HMAC 链验证
+   - 成功发现篡改导致的链断裂
+
+4. **完整性验证器收口**
+   - 当前 `_verify_integrity_day25()` 已严格对齐 Day 25 契约
+   - MAC payload 顺序固定为：
+     - `sn|query_commitment|decision|timestamp_ms|prev_hash`
+   - 同时执行两类检查：
+     1. 链连续性检查：
+        - 当前记录 `prev_hash == 上一条记录 entry_mac`
+     2. 内容完整性检查：
+        - 重算 `entry_mac` 并与账本值比较
+
+### 验收结果
+执行：
+- `python scripts/test_day46_malicious_audit.py`
+
+结果：
+1. 场景 C 通过：
+   - 成功发现跨证据源最小一致性问题
+   - 输出：
+     - `状态矛盾发现=True`
+     - `载荷矛盾发现=True`
+
+2. 场景 D 通过：
+   - 成功发现离线账本链断裂
+   - 输出：
+     - `契约级 HMAC 校验失败，篡改被识破`
+
+3. auditor 服务侧日志确认：
+   - `POST /api/v1/auditor/report` 返回 `200 OK`
+   - `GET /api/v1/auditor/trace/{sn}?expected_cq=...` 返回 `200 OK`
+
+### 关键结论
+- Day 46 目标已完成：
+  - 模拟服务端伪造执行记录或错误关联 `c_q`
+  - Auditor 证据与 Redis 执行证据可联合发现最小一致性问题
+- Day 25 的链式 HMAC 审计账本仍有效：
+  - 离线篡改 `query_commitment` 会被识别
+- 当前原型已具备：
+  - 最小一致性发现能力
+  - 最小篡改留痕能力
+
+### 当前边界 / 备注
+- 当前 Day 46 验证的是：
+  - 最小争议验证
+  - 最小执行一致性发现
+- 当前尚未扩展为：
+  - 完整 authenticated PIR
+  - 完整 verifiable PIR
+  - 完整执行正确性证明机制
+
+### 下一步
+- 进入 Day 47：Authenticated / Verifiable PIR 兼容性验证
+- 目标是验证 access-control 层与 APIR / VPIR 风格执行路径可共存，而不是重写整套 PIR 正确性证明框架

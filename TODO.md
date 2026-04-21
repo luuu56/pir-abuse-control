@@ -1093,6 +1093,36 @@
   - [x] 能发现状态与日志不一致
 - [x] Day 46 预演收获：
   - [x] Auditor trace 一致性字段可发现承诺篡改
+### Day 46：恶意服务端伪造执行记录测试
+- [x] 新增 `scripts/test_day46_malicious_audit.py`
+- [x] 模拟跨证据源执行记录矛盾：
+  - [x] Redis 执行真相为 `CONSUMED`
+  - [x] Auditor 审计记录伪造为 `FAILED`
+- [x] 在 `trace/{sn}` 查询中接入 `expected_cq`
+- [x] 验证可发现：
+  - [x] 状态矛盾
+  - [x] `query_commitment` 关联矛盾
+- [x] 模拟离线账本篡改：
+  - [x] 复制账本副本
+  - [x] 定位目标 `SN`
+  - [x] 篡改 `query_commitment`
+- [x] 实现基于 Day 25 契约的完整性校验：
+  - [x] 校验 `prev_hash` 链连续性
+  - [x] 校验 `entry_mac` 内容完整性
+  - [x] 严格对齐 MAC payload：`sn|query_commitment|decision|timestamp_ms|prev_hash`
+
+### Day 46 验收结果
+- [x] 成功发现跨证据源最小一致性问题
+- [x] 成功发现离线账本篡改导致的链断裂
+- [x] Day 46 验收通过：`能发现最小一致性问题`
+
+### Day 46 结论
+- [x] 当前原型已具备“最小一致性发现”能力
+- [x] 当前能力边界仍保持在：
+  - [x] 最小争议验证
+  - [x] 最小篡改留痕
+- [x] 不扩展为完整 verifiable execution 机制
+- 
 
 ## 当前项目状态总结 
 - Issuer blind-sign 已跑通
