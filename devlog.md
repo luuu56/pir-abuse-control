@@ -3093,3 +3093,152 @@ Day 47 共完成两类验收：
 ### 下一步
 - 进入 Day 49：基线实验 2
 - 目标是对比加入用户态 access-control 后的性能与资源变化
+- 
+## 2026-04-21
+
+## Day 49：基线实验 2 完成
+
+### 完成内容
+1. **Day 49 L7 防御基线脚本落地**
+   - 新增：
+     - `scripts/test_day49_baseline_2.py`
+
+2. **实验边界固定**
+   - 当前 Day 49 严格固定为：
+     - 只有用户态 verifier
+     - 无 eBPF
+   - 压测目标为：
+     - `POST /api/v1/verifier/execute`
+
+3. **模式拆分收口**
+   - 当前已将 Day 49 拆成三类基线：
+     1. `schema`
+        - 入口校验层 (FastAPI / 请求结构缺失) 基线
+     2. `crypto`
+        - 密码学校验 / 业务拒绝路径基线
+     3. `replay`
+        - 状态机 / Redis 并发锁 IO 基线
+
+4. **脚本口径收口**
+   - 当前脚本已支持：
+     - 预生成攻击载荷
+     - 解析 verifier 业务返回：
+       - `200_SUCCESS`
+       - `200_REJECTED`
+       - `422_VALIDATION_ERR`
+     - 统计：
+       - 总耗时
+       - 攻击发起吞吐量
+       - 防御成功吞吐量
+       - 全响应混合延迟：
+         - `Avg`
+         - `P95`
+         - `P99`
+         - `Max`
+       - Host CPU / Memory
+       - 防御结果分布
+   - `crypto` 模式已修正为使用当前 epoch，避免被过期票据快拒绝带偏
+   - `replay` 模式中的母票申请属于预加载阶段，不计入压测时长
+
+### 运行结果
+
+#### 1. Schema 模式
+执行：
+- `python scripts/test_day49_baseline_2.py 127.0.0.1 --mode schema --requests 500 --concurrency 100`
+
+结果：
+- 总耗时：
+  - `0.49 s`
+- 攻击发起吞吐量：
+  - `1017.76 req/s`
+- 防御成功吞吐量：
+  - `1017.76 req/s`
+- 全响应混合延迟：
+  - `Avg = 83.74 ms`
+  - `P95 = 107.91 ms`
+  - `P99 = 114.29 ms`
+  - `Max = 114.91 ms`
+- Host CPU：
+  - `Avg = 0.0%`
+  - `Max = 0.0%`
+- 防御结果分布：
+  - `500 x 200_REJECTED`
+
+结论：
+- schema 缺失字段请求在当前契约下主要落入业务拒绝路径
+- 当前是三类模式中最轻的一条防御路径
+
+#### 2. Crypto 模式
+执行：
+- `python scripts/test_day49_baseline_2.py 127.0.0.1 --mode crypto --requests 500 --concurrency 100`
+
+结果：
+- 总耗时：
+  - `0.68 s`
+- 攻击发起吞吐量：
+  - `736.44 req/s`
+- 防御成功吞吐量：
+  - `736.44 req/s`
+- 全响应混合延迟：
+  - `Avg = 119.06 ms`
+  - `P95 = 143.40 ms`
+  - `P99 = 146.83 ms`
+  - `Max = 153.32 ms`
+- Host CPU：
+  - `Avg = 43.0%`
+  - `Max = 85.9%`
+- 防御结果分布：
+  - `500 x 200_REJECTED`
+
+结论：
+- 相比 schema，密码学校验 / 材料检查路径明显更重
+- 但仍能在较高吞吐下稳定拒绝全部伪造请求
+
+#### 3. Replay 模式
+执行：
+- `python scripts/test_day49_baseline_2.py 127.0.0.1 --mode replay --requests 500 --concurrency 100`
+
+结果：
+- 总耗时：
+  - `0.70 s`
+- 攻击发起吞吐量：
+  - `710.54 req/s`
+- 防御成功吞吐量：
+  - `710.54 req/s`
+- 全响应混合延迟：
+  - `Avg = 119.02 ms`
+  - `P95 = 155.44 ms`
+  - `P99 = 168.39 ms`
+  - `Max = 684.23 ms`
+- Host CPU：
+  - `Avg = 41.4%`
+  - `Max = 82.8%`
+- 防御结果分布：
+  - `499 x 200_REJECTED`
+  - `1 x 200_SUCCESS`
+
+结论：
+- replay 结果与系统语义完全一致：
+  - 仅 1 次成功
+  - 其余请求全部被拒绝
+- 当前 replay 路径与 crypto 路径成本接近，但存在单点长尾
+- 整体分布仍稳定，未出现系统失控
+
+### 关键结论
+- Day 49 目标已完成：
+  - 已获得“只有用户态 verifier、无 eBPF”条件下的第一版 L7 防御基线
+- 与 Day 48 相比，当前结果表明：
+  - 用户态 verifier 的拒绝成本显著低于无前置保护直打 PIR 服务入口
+- 当前三类模式形成明显成本梯度：
+  - `schema` 最轻
+  - `crypto` 更重
+  - `replay` 与 `crypto` 接近，且保持正确防重放语义
+
+### 当前边界 / 备注
+- 当前 CPU / Memory 指标仍为 Host 级别，不是单进程级别
+- `schema` 模式当前主要落入 `200_REJECTED`，而非 `422`
+- 当前 Day 49 结果适合作为 Day 50 / eBPF 对比前的用户态基线
+
+### 下一步
+- 进入 Day 50：基线实验 3 / 后续对照实验
+- 目标是在当前 Day 48 / Day 49 基线基础上继续完成有 eBPF 参与条件下的比较

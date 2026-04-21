@@ -1191,6 +1191,53 @@
 - [x] 当前 `concurrency=100` 时已明显逼近 CPU 主导瓶颈区间
 - [x] 当前内存占用相对平稳，瓶颈更偏向 CPU / 请求处理能力
 
+### Day 49：基线实验 2
+- [x] 新增 `scripts/test_day49_baseline_2.py`
+- [x] 固定当前实验边界为：
+  - [x] 只有用户态 verifier
+  - [x] 无 eBPF
+- [x] 压测目标固定为：
+  - [x] `POST /api/v1/verifier/execute`
+- [x] 当前已收口三类模式：
+  - [x] `schema`：入口校验层基线
+  - [x] `crypto`：密码学校验层基线
+  - [x] `replay`：状态机 / Redis 并发锁 IO 基线
+- [x] 当前统计指标包括：
+  - [x] 总耗时
+  - [x] 攻击发起吞吐量
+  - [x] 防御成功吞吐量
+  - [x] 全响应混合延迟 `Avg / P95 / P99 / Max`
+  - [x] Host CPU `Avg / Max`
+  - [x] Host Memory `Avg / Max`
+  - [x] 防御结果分布
+
+### Day 49 验收结果
+- [x] `schema` 模式：
+  - [x] `500 x 200_REJECTED`
+  - [x] 吞吐量：`1017.76 req/s`
+  - [x] 平均延迟：`83.74 ms`
+- [x] `crypto` 模式：
+  - [x] `500 x 200_REJECTED`
+  - [x] 吞吐量：`736.44 req/s`
+  - [x] 平均延迟：`119.06 ms`
+  - [x] Host CPU Avg / Max：`43.0% / 85.9%`
+- [x] `replay` 模式：
+  - [x] `499 x 200_REJECTED`
+  - [x] `1 x 200_SUCCESS`
+  - [x] 吞吐量：`710.54 req/s`
+  - [x] 平均延迟：`119.02 ms`
+  - [x] Host CPU Avg / Max：`41.4% / 82.8%`
+- [x] Day 49 验收通过：已获得“只有用户态 verifier、无 eBPF”条件下的第一版 L7 防御基线
+
+### Day 49 结论
+- [x] 用户态 verifier 的拒绝成本显著低于无前置保护直打 PIR 服务入口
+- [x] 不同拒绝路径存在明显成本梯度：
+  - [x] `schema` 最轻
+  - [x] `crypto` 更重
+  - [x] `replay` 与 `crypto` 接近，且语义正确
+- [x] replay 模式已再次验证：
+  - [x] 同一票据高并发下只允许一次成功
+
 ## 当前项目状态总结 
 - Issuer blind-sign 已跑通
 - Client ticket acquisition 已跑通
