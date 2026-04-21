@@ -990,6 +990,31 @@
   - [x] 新票仍可从 Issuer(8001) 正常获取
   - [x] 发往 Verifier(8002) 的同源后续请求被 fast-path 抑制
 - [x] Auditor 在本轮联调中已接通并成功写入审计记录
+### Day 41：前置验证效果测试
+- [x] 新增 `scripts/test_day41_metrics.py`
+- [x] 采用受控顺序执行四类流量，避免 Day 40 的 derived L4 block 污染前序统计：
+  - [x] 正常流量
+  - [x] 无票据流量
+  - [x] 静态恶意指纹流量
+  - [x] replay 流量
+- [x] 通过 verifier `/metrics` 获取基线与最终指标
+- [x] 统计以下指标：
+  - [x] `total_requests` 增量
+  - [x] `blocked_before_pir` 增量
+  - [x] `pir_invoked` 增量
+  - [x] `eBPF Gateway Drops (Approx)` 近似值
+- [x] Day 41 验收通过：
+  - [x] 5 次正常流量全部 `SUCCESS`
+  - [x] 5 次无票据流量全部 `REJECTED / Missing Ticket in request`
+  - [x] 5 次静态恶意指纹流量主要被 eBPF 前置拦截
+  - [x] replay 原始消费成功，首个 replay 进入 verifier 被拒绝，后续 replay 主要被 eBPF derived block 抑制
+- [x] Day 41 漏斗统计结果收口为：
+  - [x] `Total Traffic Sent Attempts = 21`
+  - [x] `HTTP Responses Received = 12`
+  - [x] `Reached Verifier (L7) = 12`
+  - [x] `Verifier Logic Blocks = 6`
+  - [x] `Penetrated to PIR = 6`
+  - [x] `eBPF Gateway Drops (Approx) = 9`
 
 ## 当前项目状态总结
 - Issuer blind-sign 已跑通

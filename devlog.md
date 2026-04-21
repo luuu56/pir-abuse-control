@@ -2337,3 +2337,126 @@ Day 35 已完成
   2. 分类统计 verifier 丢弃数量
   3. 统计进入 PIR 数量
   4. 按无票据 / 格式错误 / replay / 正常流量分别测试
+  5. 
+  ## 2026-04-21
+
+## Day 41：前置验证效果测试完成
+
+### 完成内容
+1. **Day 41 统计脚本落地**
+   - 新增：
+     - `scripts/test_day41_metrics.py`
+   - 脚本目标：
+     - 在受控顺序下发送四类流量
+     - 获取 verifier `/metrics` 的基线与最终值
+     - 输出 eBPF / verifier / PIR 三层漏斗效果
+
+2. **测试顺序收口**
+   - 当前执行顺序固定为：
+     1. 正常流量（5 次）
+     2. 无票据流量（5 次）
+     3. 静态恶意指纹流量（5 次）
+     4. replay 风暴（1 次原始消费 + 5 次 replay）
+   - 该顺序的原因是：
+     - Day 40 的 derived L4 block 会在 replay 后对同源流量产生短时 suppress
+     - 若 replay 提前执行，会污染正常流量统计
+
+3. **客户端观测与服务端统计口径分离**
+   - 脚本中同时记录：
+     - `total_sent_attempts`
+     - `http_responses_received`
+   - 同时从 verifier `/metrics` 拉取：
+     - `total_requests`
+     - `blocked_before_pir`
+     - `pir_invoked`
+   - 并明确说明：
+     - `Reached Verifier (L7)` 为服务端 authoritative count
+     - `HTTP Responses Received` 为客户端观测值
+     - `eBPF Gateway Drops (Approx)` 为实验室近似值
+
+### 验收结果
+
+#### 1. 正常流量
+- 共发送 5 次
+- 5 次均返回：
+  - `Status: 200`
+  - `Decision: SUCCESS`
+  - `Reason: PIR execution completed`
+- 说明正常流量稳定进入 PIR 路径
+
+#### 2. 无票据流量
+- 共发送 5 次
+- 5 次均返回：
+  - `Status: 200`
+  - `Decision: REJECTED`
+  - `Reason: Missing Ticket in request`
+- 说明候选流量未被 eBPF 误杀，而是稳定在 verifier 业务层被拒绝
+
+#### 3. 静态恶意指纹流量
+- 共发送 5 次 raw socket `HACK...` 流量
+- 客户端无 HTTP 响应
+- 结合最终漏斗统计，说明这类流量主要被 eBPF 前置层拦截
+
+#### 4. replay 流量
+- 原始合法消费：
+  - `Status: 200`
+  - `Decision: SUCCESS`
+  - `Reason: PIR execution completed`
+- 第 1 次 replay：
+  - `Status: 200`
+  - `Decision: REJECTED`
+  - `Reason: Ticket already CONSUMED`
+- 第 2~5 次 replay：
+  - 全部 timeout
+  - 表明后续 replay 主要被 Day 40 的 eBPF derived block 提前压制
+
+### 最终漏斗统计
+脚本最终输出为：
+
+- `Total Traffic Sent Attempts = 21`
+- `HTTP Responses Received = 12`
+- `Reached Verifier (L7) = 12`
+- `Verifier Logic Blocks = 6`
+- `Penetrated to PIR = 6`
+- `eBPF Gateway Drops (Approx) = 9`
+
+### 结果解释
+这组数字可解释为：
+
+- 总共 21 次流量尝试
+- 其中 12 次到达 verifier
+- 到达 verifier 的 12 次中：
+  - 6 次被 verifier 逻辑拒绝
+    - 5 次无票据
+    - 1 次首个 replay
+  - 6 次成功进入 PIR
+    - 5 次正常流量
+    - 1 次 replay 原始消费
+- 剩余 9 次近似归入 eBPF 前置拦截
+  - 5 次静态恶意指纹
+  - 4 次后续 replay
+
+### 关键结论
+- Day 41 已完成前置验证效果测试
+- 当前两级防线的漏斗效果已被验证：
+  - 正常流量主要进入 PIR
+  - 无票据流量主要在 verifier 被拒绝
+  - 静态恶意指纹流量主要在 eBPF 被拦截
+  - replay 流量中，首个 replay 由 verifier 识别，后续 replay 大多被 eBPF derived block 抑制
+- 因而 Day 41 的核心目标已达到：
+  - 可以分类观察 eBPF 丢弃数量
+  - 可以分类观察 verifier 丢弃数量
+  - 可以观察进入 PIR 数量
+
+### 当前说明
+- `eBPF Gateway Drops (Approx)` 不是精密网络测量值，而是实验室近似值：
+  - `Total Sent Attempts - Reached Verifier`
+  - 默认假设外部网络无额外丢包
+- `Reached Verifier (L7)` 仍是当前最可信的服务端 authoritative funnel 统计口径
+
+### 下一步
+- 进入 Day 42：本周重构与留档
+- 重点：
+  1. 画两级前置验证图
+  2. 写 fast path / full path 文档
+  3. 收口 eBPF 与 verifier 的职责边界说明
