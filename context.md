@@ -45,6 +45,8 @@
 - Day 40：来源级短时 derived block 联动已成立
 - Day 41：两级前置验证漏斗效果已完成第一轮量化测试
 - Day 42：两级前置验证架构文档化与重构收口完成
+- Day 43：恶意客户端 replay 攻击实验已完成
+- Day 44：客户端批量滥用攻击与 full path 承压测试已完成
 
 当前已完成：
 
@@ -95,6 +97,8 @@
 - Day 40 verifier/Redis 派生来源级短时 block -> eBPF blocklist 联动
 - Day 41 两级前置验证漏斗统计
 - Day 42 `docs/architecture_defense.md` 与 docs 体系收口
+- Day 43 replay attack 三阶段实验与联合防御统计
+- Day 44 batch abuse 压测与 full path / abuse payload 分离验证
 
 当前 Day 12 生命周期在跨服务模式下已再次通过 4 条关键验收：
 
@@ -563,7 +567,69 @@
    - `sequence.md` 负责总体时序
    - `architecture_defense.md` 负责两级前置验证分层防御留档
 
-因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、主链核心场景已完成本周联调区分验证、Redis 状态表已完成 Day 22 收口、Day 23 原子核销并发验收通过、Day 24 判定与消费语义一致性已落地、Day 25–27 审计留痕/追溯/争议闭环已形成、Day 28 verifier 内部结构已稳定收口、Day 29 Python 控制层已可实际驱动真实主候选 SimplePIR 计算、Day 31–35 已完成请求到真实 PIR 结果的协议对齐、主链 happy path、非法请求 PIR 隔离与第一轮功能性指标闭环、Day 36–42 已完成 eBPF 第一版边界固定、最小环境验证、TC 轻量前置过滤、derived block 联动、漏斗量化与架构留档”的阶段。
+当前 Day 43 已完成 replay 攻击实验：
+
+1. Day 43 已进入第 7 周“攻击实验、恶意客户端测试、兼容性验证”阶段，当前聚焦恶意客户端 replay 攻击
+2. 当前核心验收标准为：
+   - 单票据重复请求下只允许一次成功
+   - 并发 replay 风暴下仍只允许一次成功
+3. 当前脚本 `scripts/test_day43_replay_attacks.py` 已收口为三阶段：
+   - Phase 1：串行 replay
+   - Phase 2：20 线程并发 replay storm
+   - Phase 3：联合防御战果统计
+4. 当前实验结果表明：
+   - 串行 replay：
+     - 第 1 次合法请求成功
+     - 第 2 次 replay 被 verifier 以 `Ticket already CONSUMED` 拒绝
+     - 第 3 次 replay 被 eBPF derived L4 dampening 提前压制
+   - 并发 replay storm：
+     - 仅 1 个请求成功进入处理路径
+     - 其余 19 个请求全部命中 `PENDING` 状态被拒绝
+     - 未出现第二次成功
+5. 因此当前最准确的解释是：
+   - 串行 replay：由 `CONSUMED` 状态机 + derived L4 block 共同拦截
+   - 并发 replay storm：主要由 Redis 原子锁 / `PENDING` 状态在最前沿完成拦截
+   - 当前测到的是“联合防御矩阵下的 replay 抗性”，而不是仅测单一组件
+
+当前 Day 44 已完成批量滥用攻击与 full path 承压测试：
+
+1. Day 44 聚焦客户端批量滥用攻击与 full path 承压测试
+2. 当前脚本 `scripts/test_day44_batch_abuse.py` 已收口为三阶段：
+   - Phase 1：合法洪峰（Valid Ticket Storm / Full Path Stress）
+   - Phase 2：密码学材料滥用（Fake Sigs & Bad Bindings）
+   - Phase 3：无票据 / 缺 witness 滥用（Missing Ticket / Missing Witness Abuse）
+3. 当前关键修正：
+   - Phase 1 与 Phase 2 的 payload 已彻底分离
+   - Phase 2 使用 fresh unused tickets 派生 abuse payload
+   - 因此 Phase 2 现在真正测的是：
+     - 伪签名材料拒绝
+     - binding 一致性校验拒绝
+   - 不再被 `Ticket already CONSUMED` 污染
+4. 当前结果表明：
+   - 合法 full path 流量：
+     - `Reached Verifier = +100`
+     - `Blocked Before PIR = +0`
+     - `Penetrated to PIR = +100`
+   - 密码学材料滥用：
+     - `Reached Verifier = +100`
+     - `Blocked Before PIR = +100`
+     - `Penetrated to PIR = +0`
+     - 典型拒绝原因为：
+       - `Invalid Ticket Signature`
+       - `Binding Consistency Check Failed`
+   - 无票据 / 缺 witness 滥用：
+     - `Reached Verifier = +100`
+     - `Blocked Before PIR = +100`
+     - `Penetrated to PIR = +0`
+     - 典型拒绝原因为：
+       - `Missing Ticket in request`
+5. 当前最准确的 Day 44 结论是：
+   - verifier 的 L7 分层前置拦截有效
+   - PIR backend 只承接合法 full path 流量
+   - 批量 abuse 请求未穿透到 PIR
+   - 当前“fake ticket abuse”主要由 `sigma` 篡改来代表，而非覆盖所有 fake ticket 形态
+
+因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、主链核心场景已完成本周联调区分验证、Redis 状态表已完成 Day 22 收口、Day 23 原子核销并发验收通过、Day 24 判定与消费语义一致性已落地、Day 25–27 审计留痕/追溯/争议闭环已形成、Day 28 verifier 内部结构已稳定收口、Day 29 Python 控制层已可实际驱动真实主候选 SimplePIR 计算、Day 31–35 已完成请求到真实 PIR 结果的协议对齐、主链 happy path、非法请求 PIR 隔离与第一轮功能性指标闭环、Day 36–42 已完成 eBPF 第一版边界固定、最小环境验证、TC 轻量前置过滤、derived block 联动、漏斗量化与架构留档、Day 43–44 已完成 replay 攻击抗性验证与批量 abuse / full path 承压验证”的阶段。
 
 ---
 
@@ -1063,6 +1129,51 @@ Day 41 已形成漏斗统计口径：
 - eBPF 不单独伪造业务决策
 - Derived Block 仅是 verifier 基于 `CONSUMED` replay 派生出的来源级短时 L4 dampening
 
+### 22. replay 攻击实验契约（Day 43）
+当前 Day 43 聚焦恶意客户端 replay 攻击。
+
+核心验收标准：
+
+- 单票据重复请求下只允许一次成功
+- 并发 replay 风暴下仍只允许一次成功
+
+当前脚本 `scripts/test_day43_replay_attacks.py` 收口为三阶段：
+
+1. Phase 1：串行 replay
+2. Phase 2：20 线程并发 replay storm
+3. Phase 3：联合防御战果统计
+
+当前最准确解释为：
+
+- 串行 replay：由 `CONSUMED` 状态机 + derived L4 block 共同拦截
+- 并发 replay storm：主要由 Redis 原子锁 / `PENDING` 状态在最前沿完成拦截
+- 当前测到的是“联合防御矩阵下的 replay 抗性”，而不是仅测单一组件
+
+### 23. 批量 abuse 与 full path 承压契约（Day 44）
+当前 Day 44 聚焦客户端批量滥用攻击与 full path 承压测试。
+
+当前脚本 `scripts/test_day44_batch_abuse.py` 收口为三阶段：
+
+1. Phase 1：合法洪峰（Valid Ticket Storm / Full Path Stress）
+2. Phase 2：密码学材料滥用（Fake Sigs & Bad Bindings）
+3. Phase 3：无票据 / 缺 witness 滥用（Missing Ticket / Missing Witness Abuse）
+
+当前关键约束：
+
+- Phase 1 与 Phase 2 的 payload 已彻底分离
+- Phase 2 使用 fresh unused tickets 派生 abuse payload
+- 因此当前真正测到的是：
+  - 伪签名材料拒绝
+  - binding 一致性校验拒绝
+- 不再被 `Ticket already CONSUMED` 污染
+
+当前最准确结论为：
+
+- verifier 的 L7 分层前置拦截有效
+- PIR backend 只承接合法 full path 流量
+- 批量 abuse 请求未穿透到 PIR
+- 当前 “fake ticket abuse” 主要由 `sigma` 篡改来代表，而非覆盖所有 fake ticket 形态
+
 ---
 
 ## 四、当前 Verifier 的真实语义边界
@@ -1079,7 +1190,7 @@ Day 41 已形成漏斗统计口径：
 - 校验 binding consistency
 - 查询并推进 Redis 状态机
 - 在进入后端执行前将票据原子推进为 `PENDING`
-- 通过 HTTP 将合法请求转发至 `PIR Server`
+- 通过 HTTP 将合法请求转发至 `PIRServer`
 - 根据 PIR Server 返回结果将票据推进为：
   - `CONSUMED`
   - `FAILED`
@@ -1093,7 +1204,7 @@ Day 41 已形成漏斗统计口径：
   - 要求 `sn` 为 64-char hex
   - Redis miss 返回 `UNUSED`
 - `/api/v1/verifier/metrics`：
-  - 用于单进程调试与 Day 33 / Day 34 / Day 41 验收
+  - 用于单进程调试与 Day 33 / Day 34 / Day 41 / Day 44 验收
   - 服务重启后计数清零
 
 当前拒绝语义已明确：
@@ -1106,6 +1217,7 @@ Day 41 已形成漏斗统计口径：
 - `Missing Request Witness`：缺失 witness 时拒绝
 - `Missing Binding Tag`：缺失 binding_tag 时拒绝
 - `Binding Consistency Check Failed`：`q / b / w` 任一被篡改时拒绝
+- `Invalid Ticket Signature`：伪签名材料业务拒绝
 - `Invalid Binding Material`：binding 材料异常时业务拒绝
 - `malformed PIR response`：PIR 成功分支结构化字段缺失时按失败烧毁处理
 - 其他前置验证失败：请求被拒绝，但票据状态保持 `UNUSED`
@@ -1138,6 +1250,7 @@ Day 41 已形成漏斗统计口径：
 - 输出解析与错误返回路径标准化
 - DB / hint 生命周期与性能优化
 - XDP / TC 取舍在真实数据面条件下的进一步定型
+- Day 44 之外其他 fake ticket 形态覆盖仍待扩展
 
 ---
 
@@ -1311,6 +1424,14 @@ Day 41 已形成漏斗统计口径：
 36. Day 42 架构留档已完成：
    - `docs/architecture_defense.md` 已新增
    - docs 体系互补关系已明确
+37. Day 43 replay 攻击实验已通过：
+   - 串行 replay 下仅首次成功
+   - 并发 20 线程 replay storm 下仅 1 次成功
+   - 其余 19 次命中 `PENDING`
+38. Day 44 batch abuse / full path 承压测试已通过：
+   - 合法 full path 100 条全部进入 PIR
+   - 密码学材料滥用 100 条全部在 verifier 前被阻断
+   - 无票据 / 缺 witness 滥用 100 条全部在 verifier 前被阻断
 
 ### 已有脚本 / 测试
 - `scripts/test_ticket_flow.sh`
@@ -1354,6 +1475,10 @@ Day 41 已形成漏斗统计口径：
 - Day 38 / 39 / 40 / 41 当前联调脚本与命令流
   - 以服务器端 TC 挂载、外部主机流量发射与 `/metrics` / trace 对账为主
   - 当前尚未统一收口为单一固定脚本文件名
+- `scripts/test_day43_replay_attacks.py`
+  - 验证 Day 43 replay 攻击三阶段实验
+- `scripts/test_day44_batch_abuse.py`
+  - 验证 Day 44 客户端批量 abuse 与 full path 承压测试
 
 ---
 
@@ -1362,8 +1487,8 @@ Day 41 已形成漏斗统计口径：
 ### 下一阶段：端到端回归脚本 / 周回归套件
 目标：
 
-- 在 Day 21 本周联调、Day 22 状态表收口、Day 23 原子核销并发验收、Day 24 判定-消费语义验收、Day 25–27 审计闭环验收、Day 28 verifier 收口回归、Day 29 真实主候选 PIR 接入验收、Day 31–35 协议/主链/指标收口、Day 36–42 eBPF 两级前置验证收口的基础上，将核心场景沉淀为可重复执行的周联调脚本 / 回归脚本
-- 避免后续在真实 PIR 后端进一步收口或更强审计增强阶段把当前主链路打坏
+- 在 Day 21 本周联调、Day 22 状态表收口、Day 23 原子核销并发验收、Day 24 判定-消费语义验收、Day 25–27 审计闭环验收、Day 28 verifier 收口回归、Day 29 真实主候选 PIR 接入验收、Day 31–35 协议/主链/指标收口、Day 36–42 eBPF 两级前置验证收口、Day 43–44 恶意客户端攻击实验收口的基础上，将核心场景沉淀为可重复执行的周联调脚本 / 回归脚本
+- 避免后续在真实 PIR 后端进一步收口、兼容性验证或更强审计增强阶段把当前主链路打坏
 
 建议覆盖场景：
 
@@ -1380,6 +1505,9 @@ Day 41 已形成漏斗统计口径：
 11. 非法请求 PIR 前隔离
 12. 功能性指标与 metrics 对账
 13. eBPF fast path + verifier full path 漏斗效果
+14. 单票据串行 replay
+15. 并发 replay storm
+16. batch abuse / full path stress
 
 需要完成：
 
@@ -1394,7 +1522,10 @@ Day 41 已形成漏斗统计口径：
 9. 验证动态映射结果与 `recovered_val` 保持一致
 10. 验证非法请求不会进入 PIR
 11. 验证 eBPF Gateway Drops / Reached Verifier / PIR Invoked 的漏斗统计稳定
-12. 将以上场景沉淀为一份周联调脚本 / 回归脚本
+12. 验证单票据重复请求下只允许一次成功
+13. 验证并发 replay 风暴下仍只允许一次成功
+14. 验证批量 abuse 请求不会穿透到 PIR
+15. 将以上场景沉淀为一份周联调脚本 / 回归脚本
 
 ### 再下一阶段：更强审计与部署增强（后续）
 目标：
@@ -1463,6 +1594,8 @@ Day 41 已形成漏斗统计口径：
 - Day 31 当前保持 `pir_index = SHA256(q) % 1024` 作为第一版映射契约
 - Day 35 当前保持 `PIRResponse.data` 强类型收口，但不扩面 Auditor 契约
 - Day 36–42 当前保持 Fast Path / Full Path 两级分工：Redis / verifier 仍是唯一业务状态真相源，eBPF 仅承担明显非法流量前置过滤与 verifier 派生的来源级短时抑制
+- Day 43 当前测到的是“联合防御矩阵下的 replay 抗性”，不错误归因给单一组件
+- Day 44 当前 “fake ticket abuse” 主要由 `sigma` 篡改来代表，不宣称已覆盖所有 fake ticket 形态
 
 ---
 
@@ -1502,6 +1635,8 @@ Day 41 已形成漏斗统计口径：
 - **Day 40 derived block 联动已成立**
 - **Day 41 两级前置验证漏斗效果已完成量化测试**
 - **Day 42 两级前置验证架构文档化已完成**
+- **Day 43 replay 攻击实验已完成**
+- **Day 44 batch abuse / full path 承压测试已完成**
 
 并已确认：
 
@@ -1533,3 +1668,5 @@ Day 41 已形成漏斗统计口径：
 - Day 40 verifier 派生的来源级短时抑制通过
 - Day 41 漏斗统计通过
 - Day 42 分层防御文档化完成
+- Day 43 replay 抗性实验通过
+- Day 44 batch abuse / full path 承压测试通过

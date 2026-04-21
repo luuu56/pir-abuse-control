@@ -2617,3 +2617,202 @@ Day 43 当前的两个 replay 场景说明了两类不同的主导防线：
 ### 当前状态
 - Day 43 验收通过
 - 当前 replay 防御已经不仅停留在“理论设计”，而是通过串行与并发两类恶意客户端攻击验证了实际有效性
+- 
+## 2026-04-21
+
+## Day 44：批量滥用攻击完成
+
+### 背景
+进入第 7 周后，实验重点从“基础防线搭建”转向“攻击实验与承压验证”。Day 44 聚焦客户端批量滥用攻击，目标是验证：
+1. 大量合法格式请求对 full path 的承压表现
+2. 伪签名 / 错误 binding 等密码学材料滥用请求是否会被 verifier 前置拦截
+3. 无票据 / 缺 witness 等候选请求是否会被 verifier 前置拦截
+4. PIR backend 是否只承接真正合法的 full path 请求
+
+### 完成内容
+1. **新增 Day 44 主压测脚本**
+   - 新增：
+     - `scripts/test_day44_batch_abuse.py`
+   - 脚本支持：
+     - `--batch`
+     - `--concurrency`
+   - 允许逐步提升批量与并发水位，而不需要反复改代码
+
+2. **引入服务端权威指标对照**
+   - 在每个 phase 前后抓取 verifier `/metrics`
+   - 输出：
+     - `total_requests` 增量
+     - `blocked_before_pir` 增量
+     - `pir_invoked` 增量
+   - 因而 Day 44 不再只是客户端返回分类，而是同时具备 verifier 侧 authoritative 对照
+
+3. **完成三阶段批量滥用测试结构**
+   - Phase 1：
+     - `Valid Ticket Storm (Full Path Stress)`
+   - Phase 2：
+     - `Crypto Material Abuse (Fake Sigs & Bindings)`
+   - Phase 3：
+     - `Missing Ticket / Missing Witness Abuse`
+   - 各阶段之间增加冷却时间，减少前一轮尾流、队列与 metrics 刷新对后一轮的污染
+
+4. **修复 Phase 2 污染问题**
+   - 本轮最关键的工程修复是：
+     - Phase 1 与 Phase 2 不再复用同一批 ticket
+   - 当前脚本将弹药分成两批：
+     - `valid_payloads_phase1`
+     - `fresh_payloads_phase2`
+   - 因此 Phase 2 现在真正测到的是：
+     - 篡改 `sigma` 导致的签名无效拒绝
+     - 篡改 `binding_tag` 导致的 binding 一致性失败拒绝
+   - 不再像上一轮那样被 `Ticket already CONSUMED` 污染
+
+### 验收结果
+
+#### Phase 1：Valid Ticket Storm (Full Path Stress)
+- 测试规模：
+  - `100 reqs @ 30 workers`
+- 客户端侧结果：
+  - `100 / 100` 全部 `200_SUCCESS`
+  - `Reason: PIR execution completed`
+- 服务端权威指标：
+  - `Total Reached Verifier = +100`
+  - `Blocked Before PIR = +0`
+  - `Penetrated to PIR = +100`
+- 性能观察：
+  - Duration ≈ `11.06s`
+  - Throughput ≈ `9.04 req/sec`
+  - Avg Latency ≈ `2952 ms`
+- 结论：
+  - 当前在该压力档位下，合法 full path 流量可稳定穿透 verifier 并进入 PIR
+
+#### Phase 2：Crypto Material Abuse (Fake Sigs & Bindings)
+- 测试规模：
+  - `100 reqs @ 30 workers`
+- 客户端侧结果：
+  - `100 / 100` 全部 `200_REJECTED`
+  - 典型拒绝原因为：
+    - `Invalid Ticket Signature`
+    - `Binding Consistency Check Failed`
+- 服务端权威指标：
+  - `Total Reached Verifier = +100`
+  - `Blocked Before PIR = +100`
+  - `Penetrated to PIR = +0`
+- 性能观察：
+  - Duration ≈ `0.32s`
+  - Throughput ≈ `314 req/sec`
+  - Avg Latency ≈ `75 ms`
+- 结论：
+  - 伪签名与错误 binding 请求均在 verifier 前置校验阶段被拦截
+  - 未有任何请求进入 PIR
+  - 当前“fake ticket abuse”主要由 `sigma` 篡改来代表
+
+#### Phase 3：Missing Ticket / Missing Witness Abuse
+- 测试规模：
+  - `100 reqs @ 30 workers`
+- 客户端侧结果：
+  - `100 / 100` 全部 `200_REJECTED`
+  - `Reason: Missing Ticket in request`
+- 服务端权威指标：
+  - `Total Reached Verifier = +100`
+  - `Blocked Before PIR = +100`
+  - `Penetrated to PIR = +0`
+- 性能观察：
+  - Duration ≈ `0.30s`
+  - Throughput ≈ `328 req/sec`
+  - Avg Latency ≈ `74 ms`
+- 结论：
+  - 无票据 / 缺 witness 候选流量稳定进入 verifier
+  - 并被前置业务规则挡在 PIR 之前
+
+### 关键结论
+- Day 44 已完成客户端批量滥用攻击与 full path 承压验证
+- 当前三类流量的落点已经清晰分层：
+  1. **合法流量**：`100%` 进入 PIR
+  2. **伪签名 / 错误 binding**：`100%` 在 verifier 前置拦截，`0` 进入 PIR
+  3. **无票据 / 缺 witness**：`100%` 在 verifier 前置拦截，`0` 进入 PIR
+- 因此当前最准确的结论是：
+  - verifier 的 L7 分层防御有效
+  - PIR backend 只承接合法 full path 流量
+  - 批量 abuse 请求未穿透到 PIR
+
+### 当前状态
+- Day 44 验收通过
+- 当前 full path 承压基线（在 `100 reqs @ 30 workers` 档位）约为：
+  - Throughput ≈ `9 req/sec`
+  - Avg Latency ≈ `3s`
+- 当前非法但格式合法的 abuse 请求（伪签名 / 错误 binding / 缺票据）能在 verifier 前段逻辑快速拒绝，且不会进入 PIR
+- 
+## 2026-04-21
+
+## Day 45：恶意 verifier 状态篡改测试完成
+
+### 背景
+进入第 7 周后，实验从客户端攻击逐步扩展到“恶意服务组件”场景。Day 45 的重点不再是验证 replay 或批量 abuse，而是验证：
+- 当 verifier 本身出现作恶行为时，
+- 审计层是否还能发现状态与日志之间的不一致。
+
+当前 Day 45 的主目标是：
+1. 模拟 verifier 篡改核销状态
+2. 用 Auditor 检查状态与日志一致性
+3. 验收：能发现状态不一致
+
+### 完成内容
+1. **新增 Day 45 恶意 verifier 测试脚本**
+   - 新增：
+     - `scripts/test_day45_malicious_verifier.py`
+   - 当前脚本支持：
+     - 显式打印 Auditor 与 Redis 目标环境
+     - 直连 Redis 模拟“内鬼 verifier”篡改状态
+     - 通过 Auditor trace 接口进行账本查询与一致性核查
+
+2. **场景 A：幽灵核销（Ghost Consumption）**
+   - 测试步骤：
+     1. 生成一个合法格式的 64-char hex 风格测试 SN
+     2. 直接在 Redis 中将其标记为 `CONSUMED`
+     3. 故意跳过对 Auditor 的审计写入
+     4. 通过 `GET /api/v1/auditor/trace/{sn}` 发起对账
+   - 实际结果：
+     - Redis 状态：`CONSUMED`
+     - Auditor 返回：`404`
+     - 响应体明确提示该 SN 对应的审计记录不存在
+   - 结论：
+     - 成功通过“Redis 状态 + Auditor 账本”外部对账发现 ghost consumption
+     - 这直接满足 Day 45 的主验收要求：
+       - 能发现状态与日志不一致
+
+3. **场景 B：承诺篡改（Commitment Tampering）**
+   - 当前将该场景视为 Day 46 的预演
+   - 测试步骤：
+     1. 构造真实 `expected_cq`
+     2. 构造被篡改的 `query_commitment`
+     3. 向 Auditor 上报被篡改后的审计记录
+     4. 再通过 `trace` + `expected_cq` 查询一致性
+   - 实际结果：
+     - Auditor 写入阶段返回：
+       - `HTTP 200`
+       - `{"status":"recorded"}`
+     - 后续 trace 查询返回：
+       - `cq_consistent = false`
+   - 结论：
+     - Auditor 不仅能发现“有状态无日志”
+     - 也能发现“有日志但内容被篡改”的不一致
+     - 这为 Day 46 的恶意执行记录 / 审计内容篡改测试提供了直接预演结果
+
+### 关键结论
+- Day 45 主验收已通过：
+  - 当 verifier 恶意只改 Redis 状态而跳过审计时，
+  - 系统能够通过外部对账发现状态与日志不一致
+- 当前最准确的 Day 45 收口表述是：
+  - Redis 中存在 `CONSUMED` 状态
+  - Auditor 中不存在对应审计记录
+  - 因而 ghost consumption 可被发现
+- 额外收获：
+  - Auditor trace 的 `cq_consistent` 字段也具备发现承诺篡改的能力
+  - 该结果更适合作为 Day 46 的预热结论
+
+### 当前状态
+- Day 45 验收通过
+- 当前审计层已证明不只是“存日志”，而是具备最基本的：
+  - 状态 / 日志缺失不一致发现能力
+  - 审计内容 / 客户端预期不一致发现能力
+- 第 7 周实验已从“客户端攻击验证”扩展到“恶意 verifier / 审计对账验证”

@@ -1052,7 +1052,49 @@
   - [x] 只允许一次成功
   - [x] 未出现 double spend
 
-## 当前项目状态总结
+### Day 44：批量滥用攻击
+- [x] 新增 `scripts/test_day44_batch_abuse.py`
+- [x] 支持可调压测参数：
+  - [x] `--batch`
+  - [x] `--concurrency`
+- [x] 在每个 phase 中接入 verifier `/metrics`，同时输出：
+  - [x] `total_requests` 增量
+  - [x] `blocked_before_pir` 增量
+  - [x] `pir_invoked` 增量
+- [x] 在各 phase 之间加入冷却时间，降低前一轮尾流对后一轮结果的污染
+- [x] 修复 Phase 2 污染问题：
+  - [x] Phase 1 与 Phase 2 使用两批独立 ticket
+  - [x] 确保密码学材料滥用测试基于 fresh unused tickets
+- [x] 完成三类批量滥用测试：
+  - [x] Phase 1：大量合法请求压测 full path
+  - [x] Phase 2：伪签名 / 错误 binding 滥用请求
+  - [x] Phase 3：无票据 / 缺 witness 候选请求
+- [x] Day 44 验收通过：
+  - [x] 合法洪峰 `100/100` 成功进入 PIR
+  - [x] 伪签名 / 错误 binding `100/100` 在 verifier 前置拦截，`0` 进入 PIR
+  - [x] 无票据 / 缺 witness `100/100` 在 verifier 前置拦截，`0` 进入 PIR
+### Day 45：恶意 verifier 状态篡改测试
+- [x] 新增 `scripts/test_day45_malicious_verifier.py`
+- [x] 支持运行环境目标提示：
+  - [x] 明确 Auditor 目标地址
+  - [x] 明确 Redis 目标地址
+  - [x] 提醒当前环境必须能直连目标 Redis / Auditor
+- [x] 场景 A：幽灵核销（Ghost Consumption）验证通过
+  - [x] 直接篡改 Redis 中票据状态为 `CONSUMED`
+  - [x] 故意不向 Auditor 写入审计记录
+  - [x] 通过外部对账发现：
+    - [x] Redis = `CONSUMED`
+    - [x] Auditor trace = `404`
+- [x] 场景 B：承诺篡改（Commitment Tampering）预演通过
+  - [x] 恶意写入篡改后的 `query_commitment`
+  - [x] Auditor 成功入账
+  - [x] 通过 `expected_cq` 查询得到 `cq_consistent = false`
+- [x] Day 45 主验收通过：
+  - [x] 能发现状态与日志不一致
+- [x] Day 46 预演收获：
+  - [x] Auditor trace 一致性字段可发现承诺篡改
+
+## 当前项目状态总结 
 - Issuer blind-sign 已跑通
 - Client ticket acquisition 已跑通
 - Verifier ticket signature verification 已跑通
@@ -1062,6 +1104,34 @@
 - Day 13 blind-sign 全链路正反例已通过
 - Day 13+ 第一阶段 Verifier -> PIR Server 网络桥接已落地
 - Day 14 第一批 blind-sign / verify 核心单测已通过（6 passed）
-- 当前审计仍为本地日志存根
-- 下一阶段重点：Auditor HTTP 存根 + 审计闭环
-- 
+- Day 16 admission primitive 第一版已落地并通过反例验收
+- Day 17 blind ticket + admission 已整合进签票主链
+- Day 18 epoch 时间窗已接入 Ticket 与 Verifier 验证路径
+- Day 19 binding 生成已正式接入 RequestInstance 构造流程
+- Day 20 verifier 侧 binding verify 已真实生效
+- Day 21 本周联调已完成，happy path / missing ticket / expired ticket / tampered binding 已可真实区分
+- Day 22 Redis 状态表与状态查询接口已收口
+- Day 23 `UNUSED -> PENDING` 原子核销并发验收已通过
+- Day 24 判定路径绑定原子核销已通过验收
+- Day 25 tamper-evident 审计日志已通过验收
+- Day 26 Auditor 查询接口已通过验收
+- Day 27 最小争议验证闭环已通过验收
+- Day 28 verifier 阶段重构已最终收口
+- Day 29 真实主候选 PIR 已正式接入
+- Day 31 请求实例与 PIR 输入对齐第一轮收口已完成
+- Day 32 主链 happy path 已可返回真实 PIR 结果
+- Day 33 非法请求不进入 PIR 的隔离验证已通过
+- Day 34 第一轮功能性指标已可自动化产出并完成对账
+- Day 35 缓冲 / 修复日收口完成，PIR 响应类型与 verifier 防御性检查已稳定落地
+- Day 36 eBPF 第一版职责范围已固定
+- Day 37 eBPF 环境搭建与最小 hello-ebpf 验证已完成
+- Day 38 TC 挂载的第一版轻量前置过滤已打通
+- Day 39 eBPF fast path 与 verifier full path 两级架构联动已验证成立
+- Day 40 来源级短时 derived block 联动已成立
+- Day 41 两级前置验证漏斗效果已完成第一轮量化测试
+- Day 42 两级前置验证架构文档化与重构收口已完成
+- Day 43 replay 攻击实验已完成，串行 replay 与并发 replay storm 下均只允许一次成功
+- Day 44 batch abuse / full path 承压测试已完成，批量 abuse 请求未穿透到 PIR
+- 当前项目已形成：blind-sign + admission + binding + verifier + PIR + audit + eBPF fast path 的阶段性闭环
+- 当前审计已从本地日志存根推进到：链式 HMAC 留痕 + Auditor trace + 最小争议验证闭环
+- 下一阶段重点：端到端周回归脚本 / 攻击实验扩展 / PIR 协议最终收口
