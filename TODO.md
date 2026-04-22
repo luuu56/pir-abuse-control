@@ -1336,6 +1336,57 @@
   - [x] binding -> 请求载荷可被篡改
   - [x] consume -> 同票可被并发重复消费
   - [x] epoch -> 旧票可被长期囤积和延迟使用
+### Day 52：自动统计脚本
+- [x] 新增 `scripts/run_eval_suite.py`
+- [x] 当前脚本已统一输出：
+  - [x] 微基准 (micro-benchmarks)
+  - [x] 主路径并发 sweep (macro-benchmarks)
+  - [x] 资源保护指标 (resource protection metrics)
+- [x] 当前脚本已自动写出：
+  - [x] `results/eval_report_day52.json`
+
+### Day 52 已覆盖的细粒度指标
+- [x] 匿名准入
+  - [x] client 准入计算开销
+  - [x] issuer 准入验证开销
+- [x] 票据
+  - [x] blind issue 耗时
+  - [x] unblind 耗时
+  - [x] verify 耗时
+- [x] 绑定
+  - [x] H(q) 生成耗时
+  - [x] b 生成耗时
+  - [x] binding verify 耗时
+- [x] 前置验证
+  - [x] 用户态 verifier 验证耗时（接口级近似）
+  - [x] 原子核销耗时
+  - [x] eBPF 单包过滤耗时（estimated）
+- [x] PIR 主路径影响
+  - [x] 不同并发下 latency
+  - [x] 不同并发下 throughput
+  - [x] 有无保护的差值
+- [x] 资源保护指标
+  - [x] blocked-before-compute ratio
+  - [x] replay interception rate
+  - [x] PIR invocation reduction（作为 backend CPU saved 的业务代理指标）
+
+### Day 52 跑分结果（本地脚本 -> 云服务器服务）
+- [x] 微基准结果已产出
+- [x] Raw PIR 并发 sweep 已产出
+- [x] Protected Path 并发 sweep 已产出
+- [x] replay 资源保护指标已产出
+- [x] `eval_report_day52.json` 已成功生成
+
+### Day 52 结论
+- [x] 自动统计脚本已形成统一评估入口
+- [x] 当前结果已能支撑：
+  - [x] 组件级开销表
+  - [x] 主路径性能对比表
+  - [x] 资源保护效果表
+- [x] 当前仍需在论文中明确说明：
+  - [x] `ebpf_kernel_drop_estimate` 为 estimated
+  - [x] `verifier_reject_path_latency_ms` 为接口级近似
+  - [x] `pir_invocation_reduction` 为 backend CPU saved 的业务代理指标
 
 ## 当前项目状态总结 
 - Issuer blind-sign 已跑通

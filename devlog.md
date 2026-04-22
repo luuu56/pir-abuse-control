@@ -3521,4 +3521,136 @@ Day 47 共完成两类验收：
   - 基线
   - 完整方案
   - 消融验证
-  的完整实验链
+  
+## 2026-04-22
+
+## Day 52：自动统计脚本完成
+
+### 完成内容
+1. **统一自动评估入口落地**
+   - 新增：
+     - `scripts/run_eval_suite.py`
+   - 当前脚本统一产出：
+     - 微基准 (Part A)
+     - 主路径性能 sweep (Part B)
+     - 资源保护指标 (Part C)
+   - 输出文件：
+     - `results/eval_report_day52.json`
+
+2. **微基准层收口**
+   - 当前已纳入：
+     - `client_solve_pow_d12`
+     - `issuer_verify_admission_logic`
+     - `blind_issue_sign`
+     - `client_unblind_signature`
+     - `verifier_verify_ticket_sig`
+     - `binding_compute_H_q`
+     - `binding_compute_b`
+     - `binding_verify`
+     - `verifier_redis_try_lock`
+     - `ebpf_kernel_drop_estimate`
+   - 当前 admission 微基准已修正为使用真实配置中的 `issuer.hmac_secret`
+   - 当前 binding verify 微基准已修正为使用语义一致的 `binding_tag_valid`
+
+3. **主路径 sweep 层收口**
+   - 当前已分别统计：
+     - `raw_pir_by_concurrency`
+     - `protected_pir_by_concurrency`
+     - `protected_vs_raw_delta`
+   - 当前并发 sweep 档位为：
+     - `1 / 10 / 30 / 50`
+   - 当前已修正：
+     - Protected Path 每个并发档位重新装填独立真票
+     - 不再复用一次性票据，避免统计失真
+
+4. **资源保护指标层收口**
+   - 当前已统计：
+     - `blocked_before_compute_ratio`
+     - `replay_interception_rate`
+     - `pir_invocation_reduction`
+   - 当前已修正：
+     - abuse 测试复用单个 `ClientSession`
+     - `pir_invocation_reduction` 改为 verifier metrics 前后快照差值
+   - 当前不再使用不可靠的客户端 CPU 差值去伪装 backend CPU saved
+
+5. **测算声明与边界说明收口**
+   - 当前 JSON `notes` 中已明确：
+     - `backend_cpu_saved` 未在该脚本中直接实测，而由 `pir_invocation_reduction` 作为业务代理指标
+     - `verifier_reject_path_latency_ms` 为接口级近似，包含 HTTP / FastAPI / Pydantic 开销
+     - `ebpf_kernel_drop_estimate` 为 estimated constant，不是动态实测值
+
+### 跑分方式
+- 当前 `run_eval_suite.py` 在本地运行
+- issuer / verifier / pir_server / auditor / tc_gateway 等服务运行在云服务器
+- 因此当前宏观结果反映的是：
+  - 远端部署下的真实端到端表现
+  - 而非纯本机 loopback 路径
+
+### 代表性结果
+
+#### 1. 微基准
+- `client_solve_pow_d12 = 15.4126 ms`
+- `issuer_verify_admission_logic = 0.0150 ms`
+- `blind_issue_sign = 24.1786 ms`
+- `client_unblind_signature = 0.4150 ms`
+- `verifier_verify_ticket_sig = 0.1630 ms`
+- `binding_compute_H_q = 0.0010 ms`
+- `binding_compute_b = 0.0028 ms`
+- `binding_verify = 0.0109 ms`
+- `verifier_redis_try_lock = 0.2428 ms`
+- `ebpf_kernel_drop_estimate = 0.0015 ms (estimated)`
+
+#### 2. Raw PIR 主路径
+- `C=1`: `25.79 TPS`, `38.72 ms`
+- `C=10`: `81.85 TPS`, `114.72 ms`
+- `C=30`: `81.56 TPS`, `312.00 ms`
+- `C=50`: `82.42 TPS`, `578.49 ms`
+
+结论：
+- 当前无保护 PIR 路径在约 `80 TPS` 左右趋于饱和
+- 并发继续提高时吞吐不再显著增长，但延迟明显上升
+
+#### 3. Protected Path
+- 当前每个 sweep 档位均重新装填独立真票
+- 贴出的代表性结果：
+  - `Success Count = 50/50`
+  - `TPS = 9.74`
+  - `Latency = 4010.77 ms`
+
+结论：
+- 当前 Protected Path 反映的是完整受保护合法主链的端到端成本
+- 不能直接等同于“verifier 单独增加的耗时”
+- verifier 纯 L7 reject 路径应结合：
+  - `verifier_reject_path_latency_ms = 22.9 ms`
+
+#### 4. 资源保护
+- `Blocked-before-compute Ratio = 99.90%`
+- `Replay Interception Rate = 99.90%`
+- `PIR Invocation Reduction = 99.90%`
+
+结论：
+- 当前 replay flood 下，仅有 `1` 次真正成功穿透
+- 绝大部分流量被挡在高开销 PIR 计算之前
+- `PIR Invocation Reduction` 当前可作为 backend 资源节省的业务代理指标
+
+### 关键结论
+- Day 52 目标已完成：
+  - 统一自动统计脚本已落地
+  - 已能自动生成细粒度组件开销、主路径 sweep、资源保护指标
+  - 已能输出结构化 JSON 结果供后续论文表格/图表使用
+
+- 当前 Day 52 的准确定位是：
+  - 第 8 周细粒度评估与论文对齐的统一跑分入口
+  - 不是一个严格意义上的内核 profiling 工具
+
+### 当前边界 / 备注
+- `ebpf_kernel_drop_estimate` 为 estimated，不是直接动态实测
+- `verifier_reject_path_latency_ms` 为接口级近似
+- `pir_invocation_reduction` 为 backend CPU saved 的业务代理指标
+- `issuer_verify_admission_logic` 当前测量的是 in-process verify logic，而不是完整 admission request RTT
+
+### 下一步
+- 进入第 8 周后续工作：
+  - Day 53：复现实验 / 结果复查
+  - Day 54：论文表格与图表对齐
+  - Day 55+：总结与最终收口
