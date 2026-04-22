@@ -7,3 +7,5 @@ httpx
 redis
 pytest
 pytest-asyncio
+aiohttp
+psutil
