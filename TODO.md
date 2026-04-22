@@ -1296,6 +1296,46 @@
   - [x] L4 eBPF/TC 接管后续抑制
 - [x] replay flood 下仅允许一次成功执行
 - [x] 后续大部分流量未继续进入高开销 PIR 路径
+### Day 51：消融实验
+- [x] 在 `configs/common/base.yaml` 中新增 `ablation` 配置块
+- [x] 新增消融开关：
+  - [x] `disable_binding`
+  - [x] `disable_consume_lock`
+  - [x] `disable_epoch`
+  - [x] `disable_admission`
+- [x] 在 `services/issuer/main.py` 中接入：
+  - [x] `disable_admission`
+- [x] 在 `services/verifier/main.py` 中接入：
+  - [x] `disable_binding`
+  - [x] `disable_consume_lock`
+  - [x] `disable_epoch`
+- [x] 新增 `scripts/test_day51_ablation.py`
+- [x] 当前脚本已覆盖四类单项攻击：
+  - [x] `admission`
+  - [x] `binding`
+  - [x] `replay`
+  - [x] `epoch`
+- [x] 当前脚本已明确：
+  - [x] 一次只开启一个 `disable_*` 开关
+  - [x] `--attack all` 仅供联调，不用于正式消融留档
+
+### Day 51 验收结果
+- [x] `disable_admission=true` 时：
+  - [x] 伪造 challenge HMAC / PoW 的虚假 proof 仍可成功签票
+- [x] `disable_binding=true` 时：
+  - [x] 合法票据绑定后的请求载荷可被中间人篡改并成功执行
+- [x] `disable_consume_lock=true` 时：
+  - [x] 同一张真票的 15 次并发请求全部成功
+- [x] `disable_epoch=true` 时：
+  - [x] 合法真票自然过期后仍可继续被 verifier 接受
+
+### Day 51 结论
+- [x] admission、binding、consume、epoch 四条机制均具备独立安全贡献
+- [x] 去掉任意一条都会暴露对应可利用漏洞：
+  - [x] admission -> 无成本伪造准入 / 获取票据
+  - [x] binding -> 请求载荷可被篡改
+  - [x] consume -> 同票可被并发重复消费
+  - [x] epoch -> 旧票可被长期囤积和延迟使用
 
 ## 当前项目状态总结 
 - Issuer blind-sign 已跑通

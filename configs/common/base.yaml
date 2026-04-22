@@ -42,8 +42,18 @@ client:
 
 # configs/common/base.yaml 新增
 epoch:
-  duration_sec: 3600  # 默认 1 小时一个纪元
-  grace_window_sec: 300 # 允许 5 分钟的跨纪元宽限期（可选，用于处理时钟漂移）
+  duration_sec: 3600  # 默认 1 小时一个纪元3600
+  grace_window_sec: 300 # 允许 5 分钟的跨纪元宽限期300（可选，用于处理时钟漂移）
 
 ebpf:
   allow_localhost_block: true
+  
+# =========================================================
+# Day 51 专供: 消融实验 (Ablation Study) 开关
+# 警告: 开启任何一项都会导致系统防线出现致命漏洞，仅供评测使用！
+# =========================================================
+ablation:
+  disable_binding: false       # 旁路: HMAC 绑定一致性校验 (导致中间人可篡改请求)
+  disable_consume_lock: false  # 旁路: Redis 原子状态机锁 (导致并发重放攻击和无限白嫖)
+  disable_epoch: false         # 旁路: 纪元过期校验 (导致票据可被长期囤积)
+  disable_admission: false     # 旁路: Issuer 准入挑战与 PoW (导致无成本恶意发票)

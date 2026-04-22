@@ -3374,4 +3374,151 @@ Day 47 共完成两类验收：
   1. 无前置保护直打 PIR 服务入口
   2. 只有用户态 verifier
   3. 完整方案：L7 + L4 协同防御
-- 后续可进入总结、对照分析与论文/报告侧收口
+- 后续可进入总结、对照分析与论文/
+- 
+## 2026-04-22
+
+## Day 51：消融实验完成
+
+### 完成内容
+1. **Day 51 消融配置收口**
+   - 在 `configs/common/base.yaml` 中新增：
+     - `ablation.disable_binding`
+     - `ablation.disable_consume_lock`
+     - `ablation.disable_epoch`
+     - `ablation.disable_admission`
+
+2. **Issuer / Verifier 消融切点落地**
+   - 在 `services/issuer/main.py` 中接入：
+     - `disable_admission`
+   - 在 `services/verifier/main.py` 中接入：
+     - `disable_binding`
+     - `disable_consume_lock`
+     - `disable_epoch`
+
+3. **Day 51 消融攻击脚本落地**
+   - 新增：
+     - `scripts/test_day51_ablation.py`
+   - 当前脚本支持四类单项攻击：
+     1. `admission`
+     2. `binding`
+     3. `replay`
+     4. `epoch`
+
+4. **实验方法约束收口**
+   - 当前 Day 51 已明确：
+     - 一次只开启一个 `disable_*` 开关
+     - 一次只运行对应单项攻击
+     - `--attack all` 仅供快速联调，不用于正式消融结论留档
+
+### 运行结果
+
+#### 1. Admission 消融
+执行条件：
+- `disable_admission=true`
+
+攻击方法：
+- 构造伪造 challenge HMAC
+- 不执行真实 PoW
+- 直接提交虚假 `admission_proof` 申请盲签
+
+结果：
+- 攻击成功
+- Issuer 仍成功签发票据
+
+结论：
+- 关闭 admission 后，Issuer 不再验证：
+  - challenge HMAC
+  - PoW
+  - burn semantics
+- 因而伪造 proof 亦可成功骗取盲签票据
+- 说明 admission 防线对“无成本恶意发票”具备独立贡献
+
+#### 2. Binding 消融
+执行条件：
+- `disable_binding=true`
+
+攻击方法：
+- 先获取一张真实票据
+- 合法绑定查询载荷 `SAFE_QUERY`
+- 再充当中间人，将 `query_payload` 篡改为恶意载荷后提交 verifier
+
+结果：
+- 攻击成功
+- verifier 接受并执行了被篡改的请求载荷
+
+结论：
+- 关闭 binding 后，请求载荷与票据之间的绑定关系消失
+- 中间人篡改攻击成立
+- 说明 binding 防线对“请求完整性与不可篡改性”具备独立贡献
+
+#### 3. Consume 消融
+执行条件：
+- `disable_consume_lock=true`
+
+攻击方法：
+- 获取 1 张真实票据
+- 对同一载荷并发发起 15 次请求
+
+结果：
+- 15 个请求全部成功执行
+
+结论：
+- 关闭 consume 后，不仅原子锁失效
+- 同时状态机消费语义整体被旁路
+- 因而同一票据可被并发重复消费
+- 说明 consume / 状态机防线对“防重放与一次性消费”具备独立贡献
+
+#### 4. Epoch 消融
+执行条件：
+- `disable_epoch=true`
+
+攻击方法：
+- 获取一张真实合法票据并完成绑定
+- 通过等待方式让票据自然过期
+- 过期后原样重新提交请求
+
+结果：
+- 攻击成功
+- verifier 接受了已自然过期的合法旧票
+
+结论：
+- 关闭 epoch 后，真实旧票在过期后仍可继续使用
+- 旧票囤积与延迟使用攻击成立
+- 说明 epoch 时间窗对“限制票据时间有效性”具备独立贡献
+
+### 关键结论
+- Day 51 目标已完成：
+  - 已对 admission、binding、consume、epoch 四条防线逐项消融并验证结果
+- 当前实验表明：
+  - 去掉任意一条机制，都会暴露对应攻击面
+- 四条机制对应的独立安全贡献可总结为：
+  - admission：
+    - 防无成本伪造准入 / 恶意签票
+  - binding：
+    - 防中间人篡改请求载荷
+  - consume：
+    - 防并发重放与多次消费
+  - epoch：
+    - 防旧票囤积与延迟使用
+
+### 当前边界 / 备注
+- 当前 Day 51 的 admission 消融语义是：
+  - 伪造 proof 亦可签票
+  - 不是“完全无 admission_proof 字段也可签票”
+- 当前 epoch 消融实验验证的是：
+  - 真实票据自然过期后仍可继续被接受
+  - 不是“篡改 epoch_id 后伪造旧票”
+- 当前 `--attack all` 仅适用于快速连通性检查
+- 正式结论仅采用逐项单开关结果
+
+### 下一步
+- 进入第 8 周后续工作：
+  - 细粒度评估
+  - 复现实验
+  - 论文对齐
+- 当前 Day 48 / Day 49 / Day 50 / Day 51 已形成：
+  - 基线
+  - 完整方案
+  - 消融验证
+  的完整实验链
