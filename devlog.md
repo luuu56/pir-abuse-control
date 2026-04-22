@@ -3654,3 +3654,81 @@ Day 47 共完成两类验收：
   - Day 53：复现实验 / 结果复查
   - Day 54：论文表格与图表对齐
   - Day 55+：总结与最终收口
+  - 
+  ## 2026-04-22
+
+## Day 53：关键实验复现完成
+
+### 完成内容
+1. **关键实验复现与归档脚本落地**
+   - 新增：
+     - `scripts/run_and_archive_experiments.sh`
+
+2. **Day 53 脚本定位收口**
+   - 当前脚本定位为：
+     - 半自动关键实验复现与证据归档 (Artifact Snapshot)
+   - 当前执行前提已明确：
+     - 必须在承载 issuer / verifier / pir_server / auditor 的同一台云服务器上执行
+   - 当前不再伪装成“完全无人值守一键复现器”
+
+3. **代码状态快照已固化**
+   - 当前归档中已保存：
+     - `commit_hash.txt`
+     - `git status -s`
+     - `git diff --stat`
+     - `working_tree.diff`
+
+4. **配置快照已分阶段固化**
+   - 当前已保存：
+     - `base_at_script_start.yaml`
+     - `base_ablation_admission.yaml`
+     - `base_ablation_binding.yaml`
+     - `base_ablation_consume.yaml`
+     - `base_ablation_epoch.yaml`
+     - `base_benchmark_clean.yaml`
+   - 这意味着：
+     - Day 51 每一轮单项消融的实际配置均可追溯
+     - Day 52 benchmark 的全甲干净配置也可追溯
+
+5. **运行清单与结果留档已固化**
+   - 当前已保存：
+     - `manifest.txt`
+     - `ablation_admission.log`
+     - `ablation_binding.log`
+     - `ablation_consume.log`
+     - `ablation_epoch.log`
+     - `eval_suite_output.log`
+     - `eval_report_day52.json`
+
+6. **服务器端日志证据已提取**
+   - 当前已保存：
+     - `issuer_tail.log`
+     - `verifier_tail.log`
+     - `pir_server_tail.log`
+     - `auditor_tail.log`
+
+7. **最终 tarball 已生成**
+   - 归档文件：
+     - `results/PIR_Abuse_Control_Artifacts_20260422_111114.tar.gz`
+
+### 关键结论
+- Day 53 目标已完成：
+  - 已重跑关键实验
+  - 已固定并保存中间配置
+  - 已保存 commit hash、config、log、JSON 结果与工作区 diff
+- 当前项目已形成可复查、可追溯的 artifact snapshot
+- Day 48–53 的基线、完整方案、消融、自动统计、复现归档链条现已闭合
+
+### 当前边界 / 备注
+- 当前 Day 53 脚本仍属于“半自动”归档脚本：
+  - 配置切换与服务重启仍需人工配合
+- 但当前已经足以支持：
+  - 结果复核
+  - 论文附录引用
+  - artifact 级证据封存
+
+### 下一步
+- 进入第 8 周后续阶段：
+  - Day 54：论文表格与图表对齐
+  - Day 55：实验结论与章节收口
+  - Day 56：最终总结与答辩/汇报材料准备

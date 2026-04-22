@@ -1387,6 +1387,49 @@
   - [x] `ebpf_kernel_drop_estimate` 为 estimated
   - [x] `verifier_reject_path_latency_ms` 为接口级近似
   - [x] `pir_invocation_reduction` 为 backend CPU saved 的业务代理指标
+### Day 53：关键实验复现
+- [x] 新增 `scripts/run_and_archive_experiments.sh`
+- [x] 当前 Day 53 归档脚本已覆盖：
+  - [x] Day 51 四项消融实验复现
+  - [x] Day 52 自动评估脚本复现
+- [x] 当前归档脚本已保存：
+  - [x] Git commit hash
+  - [x] Git status
+  - [x] Git diff stat
+  - [x] working tree diff
+  - [x] 运行 manifest
+  - [x] 配置快照
+  - [x] 关键实验日志
+  - [x] Day 52 JSON 报告
+  - [x] 微服务后台日志尾部
+- [x] 当前配置快照已细化到：
+  - [x] `base_at_script_start.yaml`
+  - [x] `base_ablation_admission.yaml`
+  - [x] `base_ablation_binding.yaml`
+  - [x] `base_ablation_consume.yaml`
+  - [x] `base_ablation_epoch.yaml`
+  - [x] `base_benchmark_clean.yaml`
+- [x] 当前归档目录已按时间戳独立生成
+- [x] 当前最终归档 tarball 已成功生成
+
+### Day 53 验收结果
+- [x] Day 51 四项消融实验日志全部归档完成
+- [x] Day 52 跑分结果与终端输出全部归档完成
+- [x] 服务器端核心日志已归档：
+  - [x] issuer
+  - [x] verifier
+  - [x] pir_server
+  - [x] auditor
+- [x] 最终归档文件已生成：
+  - [x] `results/PIR_Abuse_Control_Artifacts_20260422_111114.tar.gz`
+
+### Day 53 结论
+- [x] 关键实验复现链已闭合
+- [x] 当前项目已具备可复查的 artifact snapshot
+- [x] 第 8 周进入：
+  - [x] 复现结果整理
+  - [x] 论文表格/图表对齐
+  - [x] 最终总结收口
 
 ## 当前项目状态总结 
 - Issuer blind-sign 已跑通
