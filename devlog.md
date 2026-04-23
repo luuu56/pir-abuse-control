@@ -3732,3 +3732,141 @@ Day 47 共完成两类验收：
   - Day 54：论文表格与图表对齐
   - Day 55：实验结论与章节收口
   - Day 56：最终总结与答辩/汇报材料准备
+  - 
+  
+## 2026-04-23
+
+## Day 56：完整演示日完成
+
+### 完成内容
+1. **最终演示控制台落地**
+   - 新增：
+     - `scripts/demo_day56_showcase.py`
+   - 当前脚本定位为：
+     - Master Demo CLI
+     - 面向答辩 / 汇报 / 录屏的统一交互式演示入口
+
+2. **演示剧本统一收束**
+   - 当前已将 6 个核心场景统一到同一套菜单式控制台：
+     1. 正常请求（Happy Path）
+     2. replay 攻击（L4/L7 协同拦截）
+     3. binding 篡改
+     4. 幽灵核销争议（Ghost Consumption）
+     5. 账本伪造争议（Record Forgery）
+     6. 资源保护展示（Computation-DoS Flood）
+
+3. **脚本稳定性增强**
+   - 当前已补充：
+     - 场景 1 / 3 / 5 的 HTTP `status_code` guard
+     - 场景 2 的 timeout / connection error 双路径兼容
+     - 场景 4 的 Redis 状态与 Auditor 响应码可视化
+     - 场景 5 的写账本 / 查争议异常处理
+   - 当前已将 `slow_print` 节奏收口为：
+     - `delay = 0.01`
+   - 当前已将洪峰展示参数收口为演示友好档位：
+     - `300 requests`
+     - `30 concurrency`
+
+### 实际演示结果
+
+#### 1. 正常请求（Happy Path）
+结果：
+- 票据获取、binding、verifier、PIR 执行均成功
+- 返回：
+  - `decision = SUCCESS`
+  - 合法 `recovered_val`
+- 演示价值：
+  - 证明完整主链可正常流转
+
+#### 2. Replay 攻击
+结果：
+- 第一枪：
+  - `SUCCESS`
+- 第二枪：
+  - `REJECTED | Ticket consumed`
+- 第三枪：
+  - 客户端侧出现符合 L4 eBPF 前置丢弃预期的 timeout / connection error
+
+演示价值：
+- 清晰展示：
+  - 一次成功消费
+  - 其后由 L7 与 L4 形成协同抑制
+
+#### 3. Binding 篡改
+结果：
+- 篡改 `query_payload` 后返回：
+  - `REJECTED | Binding Check Failed`
+
+演示价值：
+- 清晰展示：
+  - 票据与请求绑定关系仍然有效
+  - 中间人篡改会被拒绝
+
+#### 4. 幽灵核销争议（Ghost Consumption）
+结果：
+- Redis 实际状态：
+  - `CONSUMED`
+- Auditor 返回：
+  - `404`
+- 最终展示：
+  - 成功识别 Redis 与审计账本的跨源矛盾
+
+演示价值：
+- 清晰展示：
+  - 恶意 verifier 单方面“幽灵核销”可被独立 Auditor 缺席记录识别
+
+#### 5. 账本伪造争议（Record Forgery）
+结果：
+- 伪造记录被追加
+- 用户使用真实 `expected_cq` 发起争议
+- 最终检测到：
+  - `cq_consistent = false`
+
+演示价值：
+- 清晰展示：
+  - 当前原型即使接受伪造记录追加
+  - 用户仍可通过 commitment 一致性对账发现问题
+
+#### 6. 资源保护展示（Computation-DoS Flood）
+结果：
+- 总请求：
+  - `300`
+- L4 拦截：
+  - `201`
+- L7 拦截：
+  - `98`
+- 成功触达：
+  - `1`
+- 穿透率：
+  - `0.33%`
+- 状态分布：
+  - `200_REJECTED = 98`
+  - `200_SUCCESS = 1`
+  - `L4_TIMEOUT = 201`
+
+演示价值：
+- 清晰展示：
+  - L4 / L7 协同防线已将绝大多数无效请求阻断在高开销 PIR 计算之前
+
+### 关键结论
+- Day 56 目标已完成：
+  - 已完成最终完整演示日
+- 当前原型现已具备统一的展示入口，可在一次演示中完整覆盖：
+  - 正常主链
+  - 客户端攻击防御
+  - 服务端争议追踪
+  - 协同资源保护
+- Day 48–56 的实验、评估、复现、讨论与演示链条现已闭合
+
+### 当前边界 / 备注
+- 场景 2 / 6 中的 L4 现象仍应表述为：
+  - “符合 L4 eBPF 前置丢弃预期”
+  - 而非仅凭客户端 timeout 就视为唯一铁证
+- 当前 Demo CLI 的定位是：
+  - 演示控制台
+  - 而非严格 benchmark 工具
+
+### 下一步
+- 进入最终收口阶段：
+  - Day 57：最终总结 / 项目结论
+  - Day 58：论文摘要、贡献点与答辩口径统一

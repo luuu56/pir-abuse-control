@@ -1430,7 +1430,50 @@
   - [x] 复现结果整理
   - [x] 论文表格/图表对齐
   - [x] 最终总结收口
+### Day 56：完整演示日
+- [x] 新增 `scripts/demo_day56_showcase.py`
+- [x] 当前 Demo CLI 已覆盖 6 个核心剧本：
+  - [x] 正常请求（Happy Path）
+  - [x] replay 攻击（L4/L7 协同拦截）
+  - [x] binding 篡改
+  - [x] 恶意 verifier 状态篡改争议（Ghost Consumption）
+  - [x] 恶意服务端记录伪造争议（Record Forgery）
+  - [x] 资源保护展示（Computation-DoS Flood）
+- [x] 当前脚本已增强：
+  - [x] 关键 HTTP 场景增加 `status_code` guard
+  - [x] L4 拦截判定兼容 timeout / connection error
+  - [x] Redis / Auditor 争议场景增加更直观证据输出
+  - [x] 洪峰场景参数收口为演示友好档位 `300 / 30`
 
+### Day 56 演示结果
+- [x] 场景 1：正常请求成功
+  - [x] `decision = SUCCESS`
+  - [x] 返回有效 `recovered_val`
+- [x] 场景 2：replay 攻击成功演示
+  - [x] 第一枪 `SUCCESS`
+  - [x] 第二枪 `REJECTED | Ticket consumed`
+  - [x] 第三枪出现符合 L4 前置丢弃预期的 timeout / connection error
+- [x] 场景 3：binding 篡改成功拦截
+  - [x] `REJECTED | Binding Check Failed`
+- [x] 场景 4：Ghost Consumption 争议成立
+  - [x] Redis 状态为 `CONSUMED`
+  - [x] Auditor 返回 `404`
+- [x] 场景 5：Record Forgery 争议成立
+  - [x] `cq_consistent = false`
+- [x] 场景 6：资源保护展示成功
+  - [x] 攻击请求 `300`
+  - [x] `L4_TIMEOUT = 201`
+  - [x] `200_REJECTED = 98`
+  - [x] `200_SUCCESS = 1`
+  - [x] 穿透率 `0.33%`
+
+### Day 56 结论
+- [x] 完整演示链已闭合
+- [x] 当前原型已能通过交互式演示同时展示：
+  - [x] 正常主链
+  - [x] 客户端攻击防御
+  - [x] 服务端争议追踪
+  - [x] 协同资源保护效果
 ## 当前项目状态总结 
 - Issuer blind-sign 已跑通
 - Client ticket acquisition 已跑通
@@ -1475,7 +1518,11 @@
 - Day 48 已完成基线实验 1：无 access-control 前置保护直打 PIR 服务入口的性能基线
 - Day 49 已完成基线实验 2：仅用户态 verifier 的 L7 防线性能基线
 - Day 50 已完成完整方案实验，形成 `L7 verifier -> derived block dispatch -> L4 eBPF/TC drop` 协同防御闭环
+- Day 51 已完成消融实验，证明 admission / binding / consume / epoch 四条机制均具备独立且不可替代的安全贡献
+- Day 52 已完成统一自动评估脚本与第一次完整跑分，微基准 / 主路径并发 sweep / 资源保护指标已可自动输出到 `results/eval_report_day52.json`
+- Day 53 已完成关键实验复现与证据归档，已形成可复查的 artifact snapshot 与时间戳归档包
+- Day 56 已完成最终演示日，正常请求 / replay / binding 篡改 / ghost consumption / record forgery / 资源保护 六类核心故事已统一收束到 Master Demo CLI
 - 当前项目已形成：blind-sign + admission + binding + verifier + PIR + audit + eBPF fast path 的阶段性闭环
 - 当前审计已从本地日志存根推进到：链式 HMAC 留痕 + Auditor trace + 最小争议验证闭环
-- 当前实验部分已具备：基线实验、恶意客户端 replay 攻击、批量 abuse 压测、恶意服务端最小篡改检测、完整方案 replay flood 防御验证
-- 下一阶段重点：周回归脚本收口 / PIR 协议最终收口 / eBPF 工程化收口 / 更多兼容性与攻击实验扩展
+- 当前实验部分已具备：基线实验、恶意客户端 replay 攻击、批量 abuse 压测、恶意服务端最小篡改检测、完整方案 replay flood 防御验证、消融实验、统一跑分评估与证据归档
+- 下一阶段重点：论文对齐与周回归脚本收口 / PIR 协议最终收口 / eBPF 工程化收口 / 更多兼容性与攻击实验扩展

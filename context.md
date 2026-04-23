@@ -53,6 +53,10 @@
 - Day 48：基线实验 1（无 access-control 前置保护）已完成
 - Day 49：基线实验 2（仅用户态 verifier）已完成
 - Day 50：完整方案实验已完成，形成 `L7 verifier -> derived block dispatch -> L4 eBPF/TC drop` 协同防御闭环
+- Day 51：消融实验已完成
+- Day 52：统一自动统计脚本已落地并完成第一次完整跑分
+- Day 53：关键实验复现与证据归档已完成
+- Day 56：最终演示日已完成，形成统一 Master Demo CLI
 
 当前已完成：
 
@@ -100,17 +104,23 @@
 - Day 37 BCC + Clang/LLVM + kprobe hello-ebpf 最小链路验证
 - Day 38 BCC Python + pyroute2 + TC / `eth0 ingress` 第一版落地
 - Day 39 eBPF fast path 与 verifier full path 联调验收
-- Day 40 verifier/Redis 派生来源级短时 block -> eBPF blocklist 联动
+- Day 40 verifier / Redis 派生来源级短时 block -> eBPF blocklist 联动
 - Day 41 两级前置验证漏斗统计
 - Day 42 `docs/architecture_defense.md` 与 docs 体系收口
 - Day 43 replay attack 三阶段实验与联合防御统计
 - Day 44 batch abuse 压测与 full path / abuse payload 分离验证
-- Day 45 Redis 状态篡改与 Auditor/Redis 外部对账验证
+- Day 45 Redis 状态篡改与 Auditor / Redis 外部对账验证
 - Day 46 恶意服务端伪造执行记录与账本链断裂检测
 - Day 47 APIR / VPIR proof-bearing response 最小兼容透传
 - Day 48 baseline 1：无 access-control 前置保护直打 PIR 入口性能基线
 - Day 49 baseline 2：仅用户态 verifier 的 L7 防线性能基线
 - Day 50 full solution：`L7 verifier -> derived block dispatch -> L4 eBPF/TC drop` 完整方案实验
+- Day 51 admission / binding / consume / epoch 四项消融实验
+- Day 52 自动评估入口 `scripts/run_eval_suite.py`
+- Day 52 统一评估报告 `results/eval_report_day52.json`
+- Day 53 关键实验归档脚本 `scripts/run_and_archive_experiments.sh`
+- Day 53 artifact snapshot 打包归档
+- Day 56 演示总控台 `scripts/demo_day56_showcase.py`
 
 当前 Day 12 生命周期在跨服务模式下已再次通过 4 条关键验收：
 
@@ -197,7 +207,7 @@
 3. `TicketStateManager` 已接入统一 YAML 配置
 4. Redis key 已支持统一前缀
 5. 终态 `CONSUMED / FAILED` 已支持基于 `epoch_id` 的 TTL 推导
-6. `ttl_override_sec` 仅保留给测试/联调用
+6. `ttl_override_sec` 仅保留给测试 / 联调用
 7. Verifier 已提供：
    - `GET /api/v1/verifier/ticket_state/{sn}`
 8. 验收结果：
@@ -308,7 +318,7 @@
 
 当前 Day 29 已完成“真实主候选 PIR 正式接入”的阶段性收口：
 
-1. `pir_server` 的 subprocess 桥接层已收口为 JSON stdin/stdout 协议
+1. `pir_server` 的 subprocess 桥接层已收口为 JSON stdin / stdout 协议
 2. Go wrapper 已从独立 mock 外部脚本推进为主候选仓库内的真实桥接入口：
    - `pir_engine/simplepir/cmd/json_bridge`
 3. 已恢复并保留边界验收分支：
@@ -360,7 +370,7 @@
 
 当前 Day 32 已完成主链路 Happy Path 联调：
 
-1. Verifier 不再只把 PIR 执行结果当作成功/失败布尔值处理
+1. Verifier 不再只把 PIR 执行结果当作成功 / 失败布尔值处理
 2. `call_pir_server()` 已返回四元组：
    - `success`
    - `payload_or_error`
@@ -436,7 +446,7 @@
 
 当前 Day 36 已完成 eBPF 第一版职责范围固定：
 
-1. 当前已明确 eBPF/XDP 在本原型中的定位是“前置的 L3/L4 及极轻量级 L7 早期启发式清洗层”
+1. 当前已明确 eBPF / XDP 在本原型中的定位是“前置的 L3 / L4 及极轻量级 L7 早期启发式清洗层”
 2. 不是业务判定层，也不是第二个 verifier
 3. 第一版挂载点优先级已固定为：
    - 优先尝试 XDP
@@ -447,7 +457,7 @@
    - 基于 eBPF Map 的预置 denylist 快速丢包
 5. 第一版 eBPF Out-of-Scope 已固定为：
    - 不做 TCP 流重组
-   - 不做 HTTP/JSON 深度解析
+   - 不做 HTTP / JSON 深度解析
    - 不做 RSA 盲签名验签
    - 不做 HMAC binding 校验
    - 不连接 Redis
@@ -460,7 +470,7 @@
 
 当前 Day 37 已完成 eBPF 环境搭建与最小 hello-ebpf 验证：
 
-1. 在 WSL2 环境中，最小 eBPF 程序已成功通过 BCC + Clang/LLVM 编译、加载并执行
+1. 在 WSL2 环境中，最小 eBPF 程序已成功通过 BCC + Clang / LLVM 编译、加载并执行
 2. 当前已验证通过的链路为：
    - `scripts/hello_ebpf.py`
    - 使用系统 Python 与 root 权限运行
@@ -468,7 +478,7 @@
    - 通过 `bpf_trace_printk` 输出 trace
 3. 当前结论是：
    - WSL2 当前环境具备运行最小 eBPF 程序的能力
-   - clang/llvm + BCC + kprobe 最小链路可用
+   - clang / llvm + BCC + kprobe 最小链路可用
 4. 当前尚未验证：
    - XDP 数据面是否可用
    - TC 数据面是否可用
@@ -502,7 +512,7 @@
 当前 Day 39 已完成两级架构联动验证：
 
 1. 已证明以下责任边界成立：
-   - Case A：`HACK...` 垃圾 TCP 流量在 `eth0 ingress` 被 eBPF/TC 提前丢弃
+   - Case A：`HACK...` 垃圾 TCP 流量在 `eth0 ingress` 被 eBPF / TC 提前丢弃
    - Case B：候选 HTTP 流量不会被 eBPF 误杀，而是进入 verifier 后被业务拒绝
    - Case C：replay / double spend 不由 eBPF 处理，而是由 verifier 状态机以 `Ticket already CONSUMED` 拒绝
    - Case D：合法流量能够穿透 fast path + full path，最终成功进入真实 PIR 执行路径
@@ -522,7 +532,7 @@
    - 本机控制面将其同步到 eBPF `blocklist` map
    - eBPF 仅在 `TCP dport=8002` 时检查该 blocklist 并执行 drop
 2. 当前准确语义为：
-   - 基于 verifier/Redis 决策派生出的来源级短时抑制
+   - 基于 verifier / Redis 决策派生出的来源级短时抑制
    - 不是票据状态被同步进 eBPF
    - 不是 eBPF 现在理解 ticket 语义
 3. 联调结果已证明：
@@ -713,16 +723,241 @@
 2. 当前结果说明：
    - replay flood 下，首次请求在 full path 被消费
    - 随后部分流量由 verifier / Redis 状态机拦截
-   - 再后续一部分流量可被 derived block 驱动的 L4 eBPF/TC 提前压制
+   - 再后续一部分流量可被 derived block 驱动的 L4 eBPF / TC 提前压制
 3. 因此当前最准确表述是：
    - Day 50 证明了完整方案下的协同防御闭环已经成立
    - 项目已具备：
      - baseline 1：无保护
      - baseline 2：仅 verifier
-     - full solution：verifier + derived block + eBPF/TC
+     - full solution：verifier + derived block + eBPF / TC
      三组可对比实验基础
 
-因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、主链核心场景已完成本周联调区分验证、Redis 状态表已完成 Day 22 收口、Day 23 原子核销并发验收通过、Day 24 判定与消费语义一致性已落地、Day 25–27 审计留痕/追溯/争议闭环已形成、Day 28 verifier 内部结构已稳定收口、Day 29 Python 控制层已可实际驱动真实主候选 SimplePIR 计算、Day 31–35 已完成请求到真实 PIR 结果的协议对齐、主链 happy path、非法请求 PIR 隔离与第一轮功能性指标闭环、Day 36–42 已完成 eBPF 第一版边界固定、最小环境验证、TC 轻量前置过滤、derived block 联动、漏斗量化与架构留档、Day 43–50 已完成 replay 攻击、batch abuse、恶意状态篡改、伪造执行记录、兼容性验证以及 baseline / full-solution 实验闭环”的阶段。
+当前 Day 51 已完成消融实验：
+
+1. 已新增：
+   - `scripts/test_day51_ablation.py`
+2. 当前已在统一配置中引入：
+   - `ablation.disable_binding`
+   - `ablation.disable_consume_lock`
+   - `ablation.disable_epoch`
+   - `ablation.disable_admission`
+3. 当前消融开关接入位置为：
+   - `services/issuer/main.py`
+     - `disable_admission`
+   - `services/verifier/main.py`
+     - `disable_binding`
+     - `disable_consume_lock`
+     - `disable_epoch`
+4. 当前 Day 51 实验原则已固定为：
+   - 一次只开启一个 `disable_*` 开关
+   - 一次只运行对应单项攻击
+   - `--attack all` 仅用于快速联调，不用于正式消融结论留档
+5. 当前四项消融结果如下：
+   - Admission 消融：
+     - 在 `disable_admission=true` 时
+     - 伪造 challenge HMAC / PoW 的虚假 proof 仍可成功骗取盲签票据
+     - 说明 admission 防线失效后，无成本准入攻击成立
+   - Binding 消融：
+     - 在 `disable_binding=true` 时
+     - 真实票据绑定请求可被中间人篡改 `query_payload`
+     - verifier 仍会接受并执行被篡改载荷
+     - 说明 binding 防线失效后，请求完整性与票据绑定关系丢失
+   - Consume 消融：
+     - 在 `disable_consume_lock=true` 时
+     - 同一张真实票据的 15 次并发请求全部成功
+     - 说明 consume / 状态机消费语义整体被旁路
+     - 重放攻击与并发白嫖攻击成立
+   - Epoch 消融：
+     - 在 `disable_epoch=true` 时
+     - 真实票据在自然过期后仍可继续被 verifier 接受
+     - 说明 epoch 时间窗防线失效后，旧票可被长期囤积与延迟使用
+6. 当前结论是：
+   - admission、binding、consume、epoch 四条机制均具备独立且不可替代的安全贡献
+   - 去掉任意一条都会暴露对应的、可被明确验证的攻击面
+
+当前 Day 52 已完成自动统计脚本落地与第一次完整跑分：
+
+1. 已新增：
+   - `scripts/run_eval_suite.py`
+2. 当前脚本统一输出三部分：
+   - Part A: 微基准
+   - Part B: 主路径并发 sweep
+   - Part C: 资源保护指标
+   - 并自动保存至：
+     - `results/eval_report_day52.json`
+3. 当前已覆盖的细粒度指标包括：
+   - 匿名准入：
+     - client 准入计算开销
+     - issuer 准入验证开销
+   - 票据：
+     - blind issue
+     - unblind
+     - verify ticket signature
+   - 绑定：
+     - H(q)
+     - b
+     - binding verify
+   - 前置验证：
+     - 用户态 verifier reject path latency（接口级近似）
+     - Redis 原子核销耗时
+     - eBPF 单包过滤耗时（estimated constant）
+   - 主路径影响：
+     - Raw PIR 在不同并发下的 latency / throughput
+     - Protected Path 在不同并发下的 latency / throughput
+     - protected_vs_raw_delta
+   - 资源保护指标：
+     - blocked-before-compute ratio
+     - replay interception rate
+     - pir_invocation_reduction
+4. 当前跑分方式为：
+   - 统计脚本在本地运行
+   - issuer / verifier / pir_server / auditor / tc_gateway 等服务运行在云服务器
+   - 因此主路径与资源保护结果体现的是“远端部署下的真实端到端表现”
+5. 当前代表性结果为：
+   - 微基准：
+     - `client_solve_pow_d12 = 15.4126 ms`
+     - `issuer_verify_admission_logic = 0.0150 ms`
+     - `blind_issue_sign = 24.1786 ms`
+     - `client_unblind_signature = 0.4150 ms`
+     - `verifier_verify_ticket_sig = 0.1630 ms`
+     - `binding_compute_H_q = 0.0010 ms`
+     - `binding_compute_b = 0.0028 ms`
+     - `binding_verify = 0.0109 ms`
+     - `verifier_redis_try_lock = 0.2428 ms`
+   - Raw PIR sweep：
+     - `C=1`: `25.79 TPS`, `38.72 ms`
+     - `C=10`: `81.85 TPS`, `114.72 ms`
+     - `C=30`: `81.56 TPS`, `312.00 ms`
+     - `C=50`: `82.42 TPS`, `578.49 ms`
+   - Protected Path：
+     - 当前合法流量可在每个 sweep 档位成功通过
+     - 示例结果：
+       - `Success Count = 50 / 50`
+       - `TPS = 9.74`
+       - `Latency = 4010.77 ms`
+   - 资源保护：
+     - `Blocked-before-compute Ratio = 99.90%`
+     - `Replay Interception Rate = 99.90%`
+     - `PIR Invocation Reduction = 99.90%`
+6. 当前结论是：
+   - Day 52 脚本已形成统一自动评估入口
+   - 当前结果已可支撑第 8 周后续：
+     - 细粒度评估
+     - 复现实验
+     - 论文表格 / 图表对齐
+   - 其中以下三项需在论文中保持诚实说明：
+     - `ebpf_kernel_drop_estimate` 为 estimated
+     - `verifier_reject_path_latency_ms` 为接口级近似
+     - `pir_invocation_reduction` 是 backend CPU saved 的业务代理指标，而非服务端 CPU profiler 直接实测
+
+当前 Day 53 已完成关键实验复现与证据归档：
+
+1. 已新增：
+   - `scripts/run_and_archive_experiments.sh`
+2. 当前 Day 53 脚本定位为：
+   - 半自动关键实验复现与证据归档脚本
+   - 要求在承载 issuer / verifier / pir_server / auditor 的同一台云服务器上执行
+3. 当前归档脚本已完成以下内容：
+   - 记录 Git commit hash
+   - 记录 Git status
+   - 记录 Git diff stat
+   - 记录 working tree diff
+   - 生成 manifest.txt
+   - 备份脚本启动时配置
+   - 备份 Day 51 每一轮消融实验配置
+   - 备份 Day 52 benchmark 运行前的干净配置
+   - 留档 Day 51 四项消融日志
+   - 留档 Day 52 跑分日志与 JSON 报告
+   - 提取 issuer / verifier / pir_server / auditor 日志尾部
+   - 最终打包为时间戳 tarball
+4. 当前归档目录已确认包含：
+   - `ablation_admission.log`
+   - `ablation_binding.log`
+   - `ablation_consume.log`
+   - `ablation_epoch.log`
+   - `base_ablation_admission.yaml`
+   - `base_ablation_binding.yaml`
+   - `base_ablation_consume.yaml`
+   - `base_ablation_epoch.yaml`
+   - `base_at_script_start.yaml`
+   - `base_benchmark_clean.yaml`
+   - `commit_hash.txt`
+   - `working_tree.diff`
+   - `manifest.txt`
+   - `eval_report_day52.json`
+   - `eval_suite_output.log`
+   - `issuer_tail.log`
+   - `verifier_tail.log`
+   - `pir_server_tail.log`
+   - `auditor_tail.log`
+5. 当前最终归档文件为：
+   - `results/PIR_Abuse_Control_Artifacts_20260422_111114.tar.gz`
+6. 当前结论是：
+   - Day 51 / Day 52 关键实验已完成复现与封存
+   - 当前项目已具备可复查、可追溯的 artifact snapshot
+   - 第 8 周后续工作可在该归档基础上继续进行论文对齐与结果复核
+
+当前 Day 56 已完成完整演示日：
+
+1. 已新增：
+   - `scripts/demo_day56_showcase.py`
+2. 当前 Demo 脚本定位为：
+   - 最终演示控制台（Master Demo CLI）
+   - 用于答辩 / 汇报 / 录屏中的交互式剧本展示
+   - 不等同于论文 benchmark 工具
+3. 当前 Demo 已覆盖六类剧本：
+   - 正常请求（Happy Path）
+   - replay 攻击（L4 / L7 协同拦截）
+   - binding 篡改
+   - 幽灵核销争议（Ghost Consumption）
+   - 账本伪造争议（Record Forgery）
+   - 资源保护展示（Computation-DoS Flood）
+4. 当前脚本已做的稳定性收口包括：
+   - 场景 1 / 3 / 5 增加 HTTP `status_code` guard
+   - 场景 2 的 L4 现象兼容 timeout / connection error
+   - 场景 4 增加 Redis 状态与 Auditor HTTP 状态可视化
+   - 场景 6 参数调整为演示友好档位：
+     - `total_requests = 300`
+     - `concurrency = 30`
+5. 当前实际演示结果如下：
+   - 场景 1：
+     - 正常主链成功流转
+     - `decision = SUCCESS`
+     - 返回合法 `recovered_val`
+   - 场景 2：
+     - 第一枪 `SUCCESS`
+     - 第二枪 `REJECTED | Ticket consumed`
+     - 第三枪出现符合 L4 eBPF 前置丢弃预期的 timeout / connection error
+   - 场景 3：
+     - 篡改 `query_payload` 后
+     - 返回：
+       - `REJECTED | Binding Check Failed`
+   - 场景 4：
+     - Redis 中状态被恶意标为 `CONSUMED`
+     - Auditor 追踪返回 `404`
+     - 成功展示“幽灵核销”跨证据源矛盾
+   - 场景 5：
+     - 伪造账本记录被追加
+     - 用户用 `expected_cq` 发起争议
+     - 成功检测到 commitment 一致性矛盾
+   - 场景 6：
+     - 攻击请求：`300`
+     - L4 拦截：`201`
+     - L7 拦截：`98`
+     - 成功穿透：`1`
+     - 穿透率：`0.33%`
+6. 当前结论是：
+   - Day 56 已成功把：
+     - 正常请求
+     - replay 攻击
+     - binding 篡改
+     - 幽灵核销争议
+     - 账本伪造争议
+     - 协同资源保护
+     六类核心故事收束到一个统一的交互式演示入口中
+   - 当前原型已具备较强的最终展示与讲解能力
+
+因此，当前项目已经从“本地 stub 语义的 verifier”进入“blind-sign 主链稳定、admission 第一版落地并已并入签票主链、epoch 时间窗已正式接入、binding 生成与 verifier 侧 binding verify 均已落地、主链核心场景已完成本周联调区分验证、Redis 状态表已完成 Day 22 收口、Day 23 原子核销并发验收通过、Day 24 判定与消费语义一致性已落地、Day 25–27 审计留痕 / 追溯 / 争议闭环已形成、Day 28 verifier 内部结构已稳定收口、Day 29 Python 控制层已可实际驱动真实主候选 SimplePIR 计算、Day 31–35 已完成请求到真实 PIR 结果的协议对齐、主链 happy path、非法请求 PIR 隔离与第一轮功能性指标闭环、Day 36–42 已完成 eBPF 第一版边界固定、最小环境验证、TC 轻量前置过滤、derived block 联动、漏斗量化与架构留档、Day 43–53 已完成 replay 攻击、batch abuse、恶意状态篡改、伪造执行记录、兼容性验证、基线 / 完整方案实验、消融、自动评估与归档封存，并在 Day 56 完成统一演示入口收束”的阶段。
 
 ---
 
@@ -1003,12 +1238,12 @@
 
 - PIR 后端继续保持独立进程 / 微服务边界
 - Python `pir_server` 继续仅作为 adapter / 控制层
-- 未引入 Python 进程内 FFI 硬绑定 Go/C/C++ PIR 引擎
+- 未引入 Python 进程内 FFI 硬绑定 Go / C / C++ PIR 引擎
 - 未破坏既有 `stub / subprocess` 双模式和前序回归路径
 
 当前 subprocess bridge 契约为：
 
-- Python 与 Go wrapper 通过 JSON stdin/stdout 交互
+- Python 与 Go wrapper 通过 JSON stdin / stdout 交互
 - 主候选桥接入口为：
   - `pir_engine/simplepir/cmd/json_bridge`
 
@@ -1074,7 +1309,7 @@
 - `recovered_val` 已作为结构化字段返回，不再只藏在结果字符串中
 
 ### 17. 真实 PIR 结构化结果契约（Day 32 / Day 35）
-当前 verifier 不再只把 PIR 执行结果视为成功/失败布尔值，而是支持透传结构化 PIR 数据。
+当前 verifier 不再只把 PIR 执行结果视为成功 / 失败布尔值，而是支持透传结构化 PIR 数据。
 
 当前 `call_pir_server()` 返回：
 
@@ -1127,13 +1362,13 @@ Day 34 当前指标口径说明：
 ### 19. eBPF 第一版职责边界契约（Day 36）
 当前已明确：
 
-- eBPF/XDP 在本原型中的定位是“前置的 L3/L4 及极轻量级 L7 早期启发式清洗层”
+- eBPF / XDP 在本原型中的定位是“前置的 L3 / L4 及极轻量级 L7 早期启发式清洗层”
 - 不是业务判定层，也不是第二个 verifier
 
 第一版挂载点优先级固定为：
 
 - 优先尝试 XDP
-- 若受限于环境或数据面可见性/可解析性约束，再降级评估 TC
+- 若受限于环境或数据面可见性 / 可解析性约束，再降级评估 TC
 
 第一版 eBPF In-Scope：
 
@@ -1144,7 +1379,7 @@ Day 34 当前指标口径说明：
 第一版 eBPF Out-of-Scope：
 
 - 不做 TCP 流重组
-- 不做 HTTP/JSON 深度解析
+- 不做 HTTP / JSON 深度解析
 - 不做 RSA 盲签名验签
 - 不做 HMAC binding 校验
 - 不连接 Redis
@@ -1161,7 +1396,7 @@ Day 34 当前指标口径说明：
 当前 Day 37 已验证：
 
 - WSL2 环境可运行最小 eBPF 程序
-- BCC + Clang/LLVM + kprobe 最小链路可用
+- BCC + Clang / LLVM + kprobe 最小链路可用
 
 当前 Day 38 服务器版实现路线固定为：
 
@@ -1191,7 +1426,7 @@ Day 40 已形成来源级短时 derived block 契约：
 
 该机制准确语义为：
 
-- 基于 verifier/Redis 决策派生出的来源级短时抑制
+- 基于 verifier / Redis 决策派生出的来源级短时抑制
 - 不是票据状态被同步进 eBPF
 - 不是 eBPF 现在理解 ticket 语义
 
@@ -1316,6 +1551,84 @@ Day 41 已形成漏斗统计口径：
   - 完整方案 full solution
   三组可横向比较的实验基础
 
+### 27. 消融实验契约（Day 51）
+当前已在统一配置中引入：
+
+- `ablation.disable_binding`
+- `ablation.disable_consume_lock`
+- `ablation.disable_epoch`
+- `ablation.disable_admission`
+
+当前实验原则固定为：
+
+- 一次只开启一个 `disable_*` 开关
+- 一次只运行对应单项攻击
+- `--attack all` 仅用于快速联调，不用于正式消融结论留档
+
+当前结论为：
+
+- admission、binding、consume、epoch 四条机制均具备独立且不可替代的安全贡献
+- 去掉任意一条都会暴露对应、且可被明确验证的攻击面
+
+### 28. 自动评估与跑分契约（Day 52）
+当前统一自动评估入口为：
+
+- `scripts/run_eval_suite.py`
+
+当前统一输出：
+
+- Part A: 微基准
+- Part B: 主路径并发 sweep
+- Part C: 资源保护指标
+
+当前统一报告输出为：
+
+- `results/eval_report_day52.json`
+
+当前需在论文中保持诚实说明的指标包括：
+
+- `ebpf_kernel_drop_estimate` 为 estimated
+- `verifier_reject_path_latency_ms` 为接口级近似
+- `pir_invocation_reduction` 为 backend CPU saved 的业务代理指标，不是 profiler 直接实测
+
+### 29. 实验证据归档契约（Day 53）
+当前关键实验复现与证据归档脚本为：
+
+- `scripts/run_and_archive_experiments.sh`
+
+当前归档目标为：
+
+- 记录 Git 状态
+- 记录配置快照
+- 留档关键实验日志
+- 留档 benchmark JSON 报告
+- 提取核心服务日志尾部
+- 最终打包为时间戳 artifact tarball
+
+当前已形成的归档文件为：
+
+- `results/PIR_Abuse_Control_Artifacts_20260422_111114.tar.gz`
+
+### 30. 最终演示契约（Day 56）
+当前最终演示入口为：
+
+- `scripts/demo_day56_showcase.py`
+
+当前定位为：
+
+- 最终演示控制台（Master Demo CLI）
+- 用于答辩 / 汇报 / 录屏中的交互式剧本展示
+- 不等同于论文 benchmark 工具
+
+当前已覆盖六类剧本：
+
+1. 正常请求（Happy Path）
+2. replay 攻击（L4 / L7 协同拦截）
+3. binding 篡改
+4. 幽灵核销争议（Ghost Consumption）
+5. 账本伪造争议（Record Forgery）
+6. 资源保护展示（Computation-DoS Flood）
+
 ---
 
 ## 四、当前 Verifier 的真实语义边界
@@ -1332,7 +1645,7 @@ Day 41 已形成漏斗统计口径：
 - 校验 binding consistency
 - 查询并推进 Redis 状态机
 - 在进入后端执行前将票据原子推进为 `PENDING`
-- 通过 HTTP 将合法请求转发至 `PIR Server`
+- 通过 HTTP 将合法请求转发至 `PIRServer`
 - 根据 PIR Server 返回结果将票据推进为：
   - `CONSUMED`
   - `FAILED`
@@ -1346,7 +1659,7 @@ Day 41 已形成漏斗统计口径：
   - 要求 `sn` 为 64-char hex
   - Redis miss 返回 `UNUSED`
 - `/api/v1/verifier/metrics`：
-  - 用于单进程调试与 Day 33 / Day 34 / Day 41 / Day 44 / Day 50 验收
+  - 用于单进程调试与 Day 33 / Day 34 / Day 41 / Day 44 / Day 52 / Day 56 验收
   - 服务重启后计数清零
 
 当前拒绝语义已明确：
@@ -1394,6 +1707,8 @@ Day 41 已形成漏斗统计口径：
 - XDP / TC 取舍在真实数据面条件下的进一步定型
 - Day 44 之外其他 fake ticket 形态覆盖仍待扩展
 - Day 45 / 46 目前仍是“可检测篡改”，不是“自动恢复篡改”
+- Day 47 当前完成的是 proof-bearing response 的兼容性验证，不是正式实现 verifiable PIR
+- Day 52 当前部分资源保护指标仍为代理口径或近似口径
 
 ---
 
@@ -1551,7 +1866,7 @@ Day 41 已形成漏斗统计口径：
    - malformed PIR response 防御性检查已生效
    - `scripts/test_day34_functional_metrics.py` 结果未回退
 31. Day 37 最小 eBPF hello 链路已通过：
-   - BCC + Clang/LLVM + kprobe + trace 输出可用
+   - BCC + Clang / LLVM + kprobe + trace 输出可用
 32. Day 38 TC 轻量前置过滤验收已通过：
    - `HACK...` 垃圾 TCP 被丢弃
    - 正常 HTTP POST 可穿过 TC 进入 verifier
@@ -1587,6 +1902,14 @@ Day 41 已形成漏斗统计口径：
    - 仅用户态 verifier 的 L7 防线性能基线已获得
 44. Day 50 full solution 实验已完成：
    - `L7 verifier -> derived block dispatch -> L4 eBPF/TC drop` 协同防御闭环已验证成立
+45. Day 51 消融实验已通过：
+   - admission / binding / consume / epoch 四条机制分别证明具备独立安全贡献
+46. Day 52 自动评估与跑分已通过：
+   - 微基准 / 并发 sweep / 资源保护指标已统一产出
+47. Day 53 关键实验归档已完成：
+   - 关键日志、配置、Git 状态、JSON 报告与服务日志尾部已封存
+48. Day 56 最终 Demo 已完成：
+   - 六类核心故事已收束到统一 Master Demo CLI 中
 
 ### 已有脚本 / 测试
 - `scripts/test_ticket_flow.sh`
@@ -1610,6 +1933,10 @@ Day 41 已形成漏斗统计口径：
 - `scripts/hello_ebpf.py`
 - `scripts/test_day43_replay_attacks.py`
 - `scripts/test_day44_batch_abuse.py`
+- `scripts/test_day51_ablation.py`
+- `scripts/run_eval_suite.py`
+- `scripts/run_and_archive_experiments.sh`
+- `scripts/demo_day56_showcase.py`
 - Day 45 / 46 / 47 / 48 / 49 / 50 当前实验脚本与命令流
   - 当前已形成实验闭环，但文件名与执行编排仍可继续收口
 
@@ -1617,11 +1944,12 @@ Day 41 已形成漏斗统计口径：
 
 ## 七、当前最值得继续推进的方向
 
-### 下一阶段：周回归脚本 / 实验编排统一收口
+### 下一阶段：论文对齐与周回归脚本统一收口
 目标：
 
-- 在 Day 44–50 已完成攻击实验、基线实验、完整方案实验的基础上
-- 将当前分散脚本收口成可重复执行的周回归 / 实验编排资产
+- 在 Day 51–53 已完成消融、统一评估、证据归档的基础上
+- 将当前结果进一步收口为论文可直接引用的表格 / 图表 / 复现实验入口
+- 同时把当前分散脚本统一成可重复执行的周回归 / 实验编排资产
 
 建议优先收口：
 
@@ -1629,6 +1957,7 @@ Day 41 已形成漏斗统计口径：
 2. replay attack / batch abuse / fake sig / missing ticket / missing witness 统一编排
 3. Auditor trace / ledger verify / state cross-check 统一编排
 4. eBPF fast path + verifier full path + derived block 漏斗对账统一编排
+5. Day 51 ablation / Day 52 eval / Day 53 artifacts 与论文图表口径统一
 
 ### 再下一阶段：PIR 协议与真实后端最终收口
 目标：
@@ -1637,7 +1966,7 @@ Day 41 已形成漏斗统计口径：
 
 需要完成：
 
-1. 抽取 PIR 请求/响应公共模型
+1. 抽取 PIR 请求 / 响应公共模型
 2. 明确 Python 控制层与 PIR 适配层的最终输入输出协议
 3. 完成 `q -> PIR query` 的正式映射继续收口
 4. 统一输出解析与错误返回路径
@@ -1675,7 +2004,7 @@ Day 41 已形成漏斗统计口径：
 - 当前审计已形成最小闭环，但仍应避免在未评估前贸然重型化
 - 项目继续优先“小修收口”，避免中途大重构
 - Day 22 当前保持 `UNUSED` 为逻辑默认态，而非签发即预写 Redis
-- Day 23 当前保持基于 Redis `SETNX` 的最小原子占位路线，不额外引入复杂 Lua/事务重构
+- Day 23 当前保持基于 Redis `SETNX` 的最小原子占位路线，不额外引入复杂 Lua / 事务重构
 - Day 24 当前保持“前置验证失败不吞票；只有成功占位到 `PENDING` 的请求才进入 PIR；PIR 结果严格绑定终态”的主路径语义
 - Day 25 当前保持链式 HMAC 审计账本作为第一版 tamper-evident 方案
 - Day 26 当前保持按 `SN` 单条追溯的最小 trace 语义
@@ -1689,6 +2018,10 @@ Day 41 已形成漏斗统计口径：
 - Day 45 / 46 当前系统提供的是“可检测的不一致 / 篡改”，不是“自动恢复”或“强不可抵赖”
 - Day 47 当前完成的是 APIR / VPIR proof-bearing response 的兼容性验证，不是正式实现可验证 PIR
 - Day 48 / 49 / 50 当前已形成三组可横向比较实验：无保护、仅 verifier、完整方案
+- Day 51 当前已证明 admission / binding / consume / epoch 四条机制均具备独立安全贡献
+- Day 52 当前部分资源保护指标仍为 estimated / 近似 / 代理口径，论文中必须诚实标注
+- Day 53 当前 artifact snapshot 已形成，应优先基于已封存结果做论文对齐
+- Day 56 当前 Demo 用于展示 / 答辩 / 录屏，不等同于 benchmark 或正式论文实验入口
 
 ---
 
@@ -1736,6 +2069,10 @@ Day 41 已形成漏斗统计口径：
 - **Day 48 基线实验 1 已完成**
 - **Day 49 基线实验 2 已完成**
 - **Day 50 完整方案实验已完成**
+- **Day 51 消融实验已完成**
+- **Day 52 自动统计与统一跑分已完成**
+- **Day 53 关键实验复现与证据归档已完成**
+- **Day 56 最终演示日已完成**
 
 并已确认：
 
@@ -1772,4 +2109,8 @@ Day 41 已形成漏斗统计口径：
 - Day 45 ghost consumption 可检测
 - Day 46 伪造执行记录可检测
 - Day 47 proof-bearing response 最小兼容透传通过
-- Day 48 / 49 / 50 三组基线 / 完整方案实验基础已形成
+- Day 48 / 49 / 50 三组 baseline / full-solution 实验基础已形成
+- Day 51 四项消融已证明机制独立安全贡献
+- Day 52 统一评估脚本与跑分报告已形成
+- Day 53 artifact snapshot 已完成封存
+- Day 56 六类核心故事已统一进入最终演示入口
