@@ -27,7 +27,7 @@ class TicketStateManager:
         self.epoch_duration = epoch_cfg.get("duration_sec", 3600)
         self.grace_window = epoch_cfg.get("grace_window_sec", 300)
 
-        self.r = redis.Redis(host=host, port=port, db=db, decode_responses=True)
+        self.r = redis.Redis(host=host, port=port, db=db, password=redis_cfg.get("password"), decode_responses=True)
         try:
             self.r.ping()
             logger.info(f"Connected to Redis at {host}:{port}, prefix='{self.prefix}'")

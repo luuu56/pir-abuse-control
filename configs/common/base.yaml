@@ -16,6 +16,7 @@ pir_server:
   port: 8003
   engine_mode: "subprocess"
   stub_latency_sec: 1.0
+  dataset_path: "data/pir/db_1gb.bin"
 
   subprocess:
     # 建议 4：指向新目录结构下的 Go 编译物
@@ -35,6 +36,7 @@ redis:
   host: 127.0.0.1
   port: 6379
   db: 0
+#  password: "Zsw121381"
 
 client:
   client_id: client_test_01
@@ -42,12 +44,12 @@ client:
 
 # configs/common/base.yaml 新增
 epoch:
-  duration_sec: 3600  # 默认 1 小时一个纪元3600
-  grace_window_sec: 300 # 允许 5 分钟的跨纪元宽限期300（可选，用于处理时钟漂移）
+  duration_sec: 3600  # 默认 1 小时一个纪元
+  grace_window_sec: 300 # 允许 5 分钟的跨纪元宽限期（可选，用于处理时钟漂移）
 
 ebpf:
   allow_localhost_block: true
-  
+
 # =========================================================
 # Day 51 专供: 消融实验 (Ablation Study) 开关
 # 警告: 开启任何一项都会导致系统防线出现致命漏洞，仅供评测使用！
@@ -57,3 +59,17 @@ ablation:
   disable_consume_lock: false  # 旁路: Redis 原子状态机锁 (导致并发重放攻击和无限白嫖)
   disable_epoch: false         # 旁路: 纪元过期校验 (导致票据可被长期囤积)
   disable_admission: false     # 旁路: Issuer 准入挑战与 PoW (导致无成本恶意发票)
+
+# [新增] Day 57 评估矩阵配置
+evaluation:
+  db_sizes_gb: [1, 2, 4, 8]
+  dbscale_test_requests: 50
+  dbscale_attack_requests: 300
+#  concurrency_levels: [1, 10, 30, 50]
+#  mixed_workload_concurrencies: [ 1, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90, 95, 100 ]
+
+    # 【新增这里】：顺便把攻击比例也放到配置里
+  mixed_workload_ratios: [ 0.0, 0.1, 0.3, 0.5, 0.7, 0.9 ]
+  legit_timeout_sec: 20
+  attack_timeout_sec: 3
+  attack_concurrency: 30

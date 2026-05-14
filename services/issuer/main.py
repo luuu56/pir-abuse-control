@@ -55,8 +55,10 @@ redis_client = redis.Redis(
     host=redis_cfg.get("host", "127.0.0.1"),
     port=redis_cfg.get("port", 6379),
     db=redis_cfg.get("db", 0),
+    password=redis_cfg.get("password"),
     decode_responses=True
 )
+
 
 class RSAPublicKeyResponse(BaseModel):
     n: str = Field(..., description="RSA Modulus (Hex string, lower case, zero-padded, no '0x')")
@@ -126,50 +128,69 @@ async def verify_admission_endpoint(proof: AdmissionResponse):
 
 @app.post("/api/v1/issuer/issue", response_model=IssueResponse)
 async def blind_sign_endpoint(req: IssueRequest):
-    ablation_cfg = config.get("ablation", {})
-    disable_admission = ablation_cfg.get("disable_admission", False)
-
-    # 只有在未开启消融时，才执行严格的准入校验
-    if not disable_admission:
-        ticket_epoch = req.admission_proof.challenge.payload.epoch_id
-        if not is_epoch_valid(ticket_epoch, int(time.time()), EPOCH_DURATION, GRACE_WINDOW):
-            logger.warning(f"Refusing to sign: Epoch {ticket_epoch} is invalid.")
-            raise HTTPException(status_code=403, detail="The requested epoch has expired.")
-
-        ok, reason, payload_dict = verify_admission_logic(req.admission_proof)
-        if not ok:
-            logger.warning(f"Admission rejected: {reason}")
-            raise HTTPException(status_code=403, detail=reason)
-
-        payload_bytes = canonical_json_bytes(payload_dict)
-        challenge_fingerprint = hashlib.sha256(
-            payload_bytes + bytes.fromhex(req.admission_proof.challenge.hmac_sig)
-        ).hexdigest()
-
-        key = f"{REDIS_PREFIX}:{challenge_fingerprint}"
-        ttl = max(1, (req.admission_proof.challenge.payload.expires_at + GRACE_WINDOW) - int(time.time()))
-
-        if not redis_client.set(key, "USED", nx=True, ex=ttl):
-            logger.warning(f"Replay detected or challenge reused: {challenge_fingerprint}")
-            raise HTTPException(status_code=403, detail="Challenge already consumed or replayed")
-    else:
-        logger.warning("🚨 [ABLATION] Admission Control bypassed! Issuing ticket blindly.")
-
-    # 执行盲签
     try:
+        # [TRACE 1] 进入 /issue
+        client_tag = req.admission_proof.challenge.payload.client_tag if req.admission_proof else "N/A"
+        epoch_id = req.admission_proof.challenge.payload.epoch_id if req.admission_proof else "N/A"
+        blinded_len = len(req.blinded_message) if req.blinded_message else 0
+        logger.info(f"[TRACE] 收到 issue 请求 | tag: {client_tag} | epoch: {epoch_id} | blinded_message len: {blinded_len}")
+
+        ablation_cfg = config.get("ablation", {})
+        disable_admission = ablation_cfg.get("disable_admission", False)
+
+        if not disable_admission:
+            ticket_epoch = req.admission_proof.challenge.payload.epoch_id
+            if not is_epoch_valid(ticket_epoch, int(time.time()), EPOCH_DURATION, GRACE_WINDOW):
+                logger.warning(f"Refusing to sign: Epoch {ticket_epoch} is invalid.")
+                raise HTTPException(status_code=403, detail="The requested epoch has expired.")
+
+            # [TRACE 2] admission 校验前
+            logger.info("[TRACE] 开始 verify_admission")
+            ok, reason, payload_dict = verify_admission_logic(req.admission_proof)
+            if not ok:
+                logger.warning(f"Admission rejected: {reason}")
+                raise HTTPException(status_code=403, detail=reason)
+            # [TRACE 3] admission 校验后
+            logger.info("[TRACE] verify_admission passed")
+
+            payload_bytes = canonical_json_bytes(payload_dict)
+            challenge_fingerprint = hashlib.sha256(
+                payload_bytes + bytes.fromhex(req.admission_proof.challenge.hmac_sig)
+            ).hexdigest()
+
+            key = f"{REDIS_PREFIX}:{challenge_fingerprint}"
+            ttl = max(1, (req.admission_proof.challenge.payload.expires_at + GRACE_WINDOW) - int(time.time()))
+
+            if not redis_client.set(key, "USED", nx=True, ex=ttl):
+                logger.warning(f"Replay detected or challenge reused: {challenge_fingerprint}")
+                raise HTTPException(status_code=403, detail="Challenge already consumed or replayed")
+        else:
+            logger.warning("🚨 [ABLATION] Admission Control bypassed! Issuing ticket blindly.")
+
+        # 处理 hex 参数
         hex_str = req.blinded_message.strip().lower()
         if hex_str.startswith("0x"):
             hex_str = hex_str[2:]
         blinded_msg_int = int(hex_str, 16)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Blinded message must be a valid hex string")
 
-    try:
+        # [TRACE 4] blind sign 前
+        logger.info("[TRACE] starting blind sign")
         blind_sig_int = crypto_manager.blind_sign(blinded_msg_int)
         blind_sig_hex = f"{blind_sig_int:0{crypto_manager.pad_len_hex}x}"
+        
+        # [TRACE 5] blind sign 后
+        logger.info("[TRACE] blind sign success")
         return IssueResponse(blinded_signature=blind_sig_hex)
+
+    # HTTPException 直接抛出，不当做未知异常
+    except HTTPException:
+        raise
+    except ValueError:
+        logger.exception("[TRACE] 参数转换报错")
+        raise HTTPException(status_code=400, detail="Blinded message must be a valid hex string")
     except Exception as e:
-        logger.error(f"Internal signing error: {e}")
+        # [TRACE 6] 异常兜底，全栈追踪！
+        logger.exception(f"[TRACE] /issue 触发致命崩溃，抛出未捕获异常: {e}")
         raise HTTPException(status_code=500, detail="Internal processing error")
 
 if __name__ == "__main__":

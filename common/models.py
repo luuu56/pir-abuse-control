@@ -39,6 +39,14 @@ class RequestInstance(BaseModel):
     binding_tag: Optional[str] = None
     witness: Optional[RequestContext] = None
 
+    # Evaluation-only metadata. These fields are ignored by the security logic
+    # and are only forwarded to the PIR backend so experiments can record
+    # backend-invocation ground truth by request type. Do not use them for
+    # authentication, authorization, or policy decisions.
+    eval_run_id: Optional[str] = Field(None, description="Evaluation run identifier")
+    eval_point_id: Optional[str] = Field(None, description="Evaluation point identifier")
+    eval_request_type: Optional[str] = Field(None, description="legit / attack_replay / attack_stale / attack_tamper / replay_preconsume")
+
 # --- 审计与响应模型 ---
 # [Day 35] 对外接口的 PIR 结果强类型载荷
 class PIRResultPayload(BaseModel):
